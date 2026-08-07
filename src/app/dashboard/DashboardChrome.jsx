@@ -8,6 +8,7 @@ import { NavigationLoadingProvider } from '@/components/dashboard/NavigationLoad
 import LoginStsTracker from '@/components/telemetry/LoginStsTracker';
 import InactivityTimeout from '@/components/auth/InactivityTimeout';
 import { VdpProvider } from '@/components/vdp/VdpContext';
+import { VdpDateRangeProvider } from '@/components/vdp/VdpDateRangeContext';
 import VdpShell from '@/components/vdp/VdpShell';
 import {
   canAccessReport,
@@ -57,13 +58,15 @@ function DashboardContent({ children }) {
       <Suspense fallback={null}>
         <NavigationLoadingProvider>
           <VdpProvider>
-            <VdpShell>
-              {denied ? (
-                <p style={{ color: '#64748b' }}>Redirecting to an allowed report…</p>
-              ) : (
-                children
-              )}
-            </VdpShell>
+            <VdpDateRangeProvider>
+              <VdpShell>
+                {denied ? (
+                  <p style={{ color: '#64748b' }}>Redirecting to an allowed report…</p>
+                ) : (
+                  children
+                )}
+              </VdpShell>
+            </VdpDateRangeProvider>
           </VdpProvider>
         </NavigationLoadingProvider>
       </Suspense>

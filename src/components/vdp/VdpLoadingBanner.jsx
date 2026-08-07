@@ -27,3 +27,26 @@ export function VdpLoadingBlock({ label = 'Loading…', minHeight = 120 }) {
     </div>
   );
 }
+
+/**
+ * Centered white card loader — All Dealers only.
+ * Shows "Loading..." plus percent in primary blue.
+ */
+export function VdpLoadingCard({ active, label = 'Loading...', percent = null }) {
+  if (!active) return null;
+  const pct =
+    percent == null || Number.isNaN(Number(percent))
+      ? null
+      : Math.max(0, Math.min(100, Math.round(Number(percent))));
+  return (
+    <div className="vdp-load-card-overlay" role="status" aria-live="polite" aria-busy="true">
+      <div className="vdp-load-card">
+        <span className="vdp-load-card-spinner" aria-hidden="true" />
+        <span className="vdp-load-card-label">{label}</span>
+        {pct != null ? (
+          <span className="vdp-load-card-pct">{pct}%</span>
+        ) : null}
+      </div>
+    </div>
+  );
+}

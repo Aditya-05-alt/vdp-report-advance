@@ -7,7 +7,8 @@ import { createClient } from '@/lib/supabase/client';
 import { resetDealerToAll } from '@/lib/dashboard/dashboardPrefs';
 import { useClient } from '@/components/dashboard/ClientContext';
 import { isAllDealerClient } from '@/lib/dashboard/allDealers';
-import { buildPeriods } from '@/lib/vdp/mockData';
+import CalendarRangePicker from '@/components/dashboard/CalendarRangePicker';
+import { useVdpDateRange } from '@/components/vdp/VdpDateRangeContext';
 
 const HOME_VIEWS = [
   { id: 'portfolio', href: '/dashboard', label: 'All Dealers' },
@@ -29,8 +30,6 @@ function viewFromPath(pathname) {
   return 'portfolio';
 }
 
-const LIVE_PERIODS = buildPeriods(new Date());
-
 export default function VdpShell({ children }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -41,11 +40,13 @@ export default function VdpShell({ children }) {
     loading: dealersLoading,
     isAllDealer,
   } = useClient();
+  const { dateRange, setDateRange, to, curLabel } = useVdpDateRange();
   const [displayName, setDisplayName] = useState('Account');
 
   const activeView = viewFromPath(pathname);
   const isDealerView = DEALER_VIEWS.some((v) => v.id === activeView);
-  const asOfLabel = `Data as of ${LIVE_PERIODS.mtd.curTo}`;
+  const showDateRange = activeView !== 'source-mapping';
+  const asOfLabel = to ? `Data through ${to}` : `Period · ${curLabel}`;
 
   const dealerList = useMemo(
     () => (dealers || []).filter((d) => d?.name && d?.ga4CustomerId),
@@ -90,75 +91,85 @@ export default function VdpShell({ children }) {
 
   return (
     <div className="vdp-root">
-      <header className="vdp-app-header">
-        <div className="vdp-titleblock">
-          <h1>VDP &amp; Page View Performance</h1>
-          <div className="vdp-sub">Dealer reporting portal</div>
-        </div>
-        <span className="vdp-pill">{asOfLabel}</span>
-        <span className="vdp-pill">{displayName}</span>
-        <Link href="/dashboard/admin/pipeline" className="vdp-chip-btn" prefetch={false}>
-          Admin
-        </Link>
-        <button type="button" className="vdp-chip-btn" onClick={handleSignOut}>
-          Log Out
-        </button>
-      </header>
-
-      <nav className="vdp-nav-primary">
-        {HOME_VIEWS.map((item) => (
-          <Link
-            key={item.id}
-            href={item.href}
-            className={`vdp-nav-home ${activeView === item.id ? 'active' : ''}`}
-            prefetch={false}
-          >
-            {item.label}
-          </Link>
-        ))}
-      </nav>
-
-      {isDealerView && (
-        <div className="vdp-dealer-bar show">
-          <button
-            type="button"
-            className="vdp-back"
-            onClick={() => router.push('/dashboard')}
-          >
-            ← All Dealers
+      <div className="vdp-top-chrome">
+        <header className="vdp-app-header">
+          <div className="vdp-titleblock">
+            <h1>VDP &amp; Page View Performance</h1>
+            <div className="vdp-sub">Dealer reporting portal</div>
+          </div>
+          {showDateRange && (
+            <div className="vdp-date-range">
+              <CalendarRangePicker
+                value={dateRange}
+                onChange={setDateRange}
+                popClassName="cdr-pop--vdp"
+              />
+            </div>
+          )}
+          <span className="vdp-pill">{asOfLabel}</span>
+          <span className="vdp-pill">{displayName}</span>
+          <button type="button" className="vdp-chip-btn" onClick={handleSignOut}>
+            Log Out
           </button>
-          <span className="vdp-crumb-sep">/</span>
-          <select
-            className="vdp-client-select"
-            value={selectValue}
-            onChange={onDealerChange}
-            disabled={dealersLoading || !dealerList.length}
-            aria-label="Select dealer"
-          >
-            {(isAllDealer || !selectValue) && (
-              <option value="">Select dealer…</option>
-            )}
-            {dealerList.map((c) => (
-              <option key={c.id} value={String(c.id)}>
-                {c.name}
-                {c.dealerCategory ? ` (${c.dealerCategory})` : ''}
-              </option>
-            ))}
-          </select>
-          <nav className="vdp-tabs-sub">
-            {DEALER_VIEWS.map((tab) => (
+        </header>
+
+        {!isDealerView && (
+          <nav className="vdp-nav-primary">
+            {HOME_VIEWS.map((item) => (
               <Link
-                key={tab.id}
-                href={tab.href}
-                className={`vdp-tab-btn ${activeView === tab.id ? 'active' : ''}`}
+                key={item.id}
+                href={item.href}
+                className={`vdp-nav-home ${activeView === item.id ? 'active' : ''}`}
                 prefetch={false}
               >
-                {tab.label}
+                {item.label}
               </Link>
             ))}
           </nav>
-        </div>
-      )}
+        )}
+
+        {isDealerView && (
+          <div className="vdp-dealer-bar show">
+            <button
+              type="button"
+              className="vdp-back"
+              onClick={() => router.push('/dashboard')}
+            >
+              ← All Dealers
+            </button>
+            <span className="vdp-crumb-sep">/</span>
+            <select
+              className="vdp-client-select"
+              value={selectValue}
+              onChange={onDealerChange}
+              disabled={dealersLoading || !dealerList.length}
+              aria-label="Select dealer"
+            >
+              {(isAllDealer || !selectValue) && (
+                <option value="">Select dealer…</option>
+              )}
+              {dealerList.map((c) => (
+                <option key={c.id} value={String(c.id)}>
+                  {c.name}
+                  {c.dealerCategory ? ` (${c.dealerCategory})` : ''}
+                </option>
+              ))}
+            </select>
+            <nav className="vdp-tabs-sub">
+              {DEALER_VIEWS.map((tab) => (
+                <Link
+                  key={tab.id}
+                  href={tab.href}
+                  className={`vdp-tab-btn ${activeView === tab.id ? 'active' : ''}`}
+                  prefetch={false}
+                >
+                  {tab.label}
+                </Link>
+              ))}
+            </nav>
+          </div>
+        )}
+      </div>
 
       <main className="vdp-main">
         {isDealerView && client && !isAllDealerClient(client) && (

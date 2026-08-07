@@ -167,7 +167,7 @@ export function rangePickerValueFromISO(from, to) {
   return { start: from, end: to, preset };
 }
 
-export default function CalendarRangePicker({ value, onChange }) {
+export default function CalendarRangePicker({ value, onChange, popClassName = '' }) {
   const [open, setOpen] = useState(false);
   const [popPos, setPopPos] = useState({ top: 0, left: 0 });
   const triggerRef = useRef(null);
@@ -305,7 +305,7 @@ export default function CalendarRangePicker({ value, onChange }) {
   const popup = open && (
     <div
       ref={popRef}
-      className="cdr-pop animate-fade-in"
+      className={`cdr-pop animate-fade-in${popClassName ? ` ${popClassName}` : ''}`}
       style={{ top: popPos.top, left: popPos.left }}
       role="dialog"
       aria-label="Date range"

@@ -13,18 +13,11 @@ import { enumerateDatesInclusive } from '@/lib/ga4/dateRange';
 import { normalizeReportDate } from '@/lib/ga4/aggregatePageDataRows';
 import { sumAllTabViewsByDate } from '@/lib/ga4/overviewViews';
 import { fmt, pct, momClass, safeDiv } from '@/lib/vdp/aggregates';
-import { buildPeriods } from '@/lib/vdp/mockData';
 import { isAllDealerClient } from '@/lib/dashboard/allDealers';
 import VdpChart from './VdpChart';
-import VdpLoadingBanner, { VdpLoadingBlock } from './VdpLoadingBanner';
-import { Card, Kpi, Seg, Toolbar, ToolbarGroup } from './VdpUi';
-
-const COMPARE_OPTS = [
-  { value: 'mtd', label: 'MTD vs Last Month (same dates)' },
-  { value: 'mom', label: 'Full Last Month vs Prior Month' },
-];
-
-const LIVE_PERIODS = buildPeriods(new Date());
+import { VdpLoadingCard } from './VdpLoadingBanner';
+import { useVdpDateRange } from './VdpDateRangeContext';
+import { Card, Kpi, Toolbar, ToolbarGroup } from './VdpUi';
 
 function cumulativeFromDaily(dateList, dailyMap) {
   let running = 0;
@@ -47,7 +40,14 @@ function conditionClass(condition) {
 
 export default function OverviewView() {
   const { client, loading: dealersLoading, isAllDealer } = useClient();
-  const [mode, setMode] = useState('mtd');
+  const {
+    from: curFrom,
+    to: curTo,
+    priorFrom: priFrom,
+    priorTo: priTo,
+    curLabel,
+    priLabel,
+  } = useVdpDateRange();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [pageCurDaily, setPageCurDaily] = useState({});
@@ -59,15 +59,15 @@ export default function OverviewView() {
   const [channelPageRows, setChannelPageRows] = useState([]);
   const [channelVdpRows, setChannelVdpRows] = useState([]);
   const [conditionRows, setConditionRows] = useState([]);
+  const [progress, setProgress] = useState(null);
   const cancelRef = useRef(false);
   const loadGenRef = useRef(0);
 
-  const p = LIVE_PERIODS[mode];
   const ga4Id = String(client?.ga4CustomerId || '').trim();
   const canLoad = Boolean(ga4Id) && !isAllDealerClient(client) && !isAllDealer;
 
   const load = useCallback(async () => {
-    if (!canLoad || !p.curFrom || !p.curTo) {
+    if (!canLoad || !curFrom || !curTo) {
       setPageCurDaily({});
       setPagePriDaily({});
       setVdpCurTotal(0);
@@ -87,6 +87,20 @@ export default function OverviewView() {
 
     setLoading(true);
     setError(null);
+    setProgress({ completed: 0, total: 8 });
+
+    const track = (promise) =>
+      promise.finally(() => {
+        if (isStale()) return;
+        setProgress((prev) =>
+          prev
+            ? {
+                ...prev,
+                completed: Math.min(prev.total, (prev.completed || 0) + 1),
+              }
+            : prev
+        );
+      });
 
     try {
       const [
@@ -99,64 +113,80 @@ export default function OverviewView() {
         chVdp,
         conditions,
       ] = await Promise.all([
-        fetchOverviewBundle({
-          clientId: ga4Id,
-          from: p.curFrom,
-          to: p.curTo,
-          onCancelCheck: () => isStale(),
-        }),
-        fetchOverviewBundle({
-          clientId: ga4Id,
-          from: p.priFrom,
-          to: p.priTo,
-          onCancelCheck: () => isStale(),
-        }),
-        fetchVdpDailyFiltered({
-          clientId: ga4Id,
-          from: p.curFrom,
-          to: p.curTo,
-          tab: 'vdp',
-          onCancelCheck: () => isStale(),
-        }),
-        fetchVdpDailyFiltered({
-          clientId: ga4Id,
-          from: p.priFrom,
-          to: p.priTo,
-          tab: 'vdp',
-          onCancelCheck: () => isStale(),
-        }),
-        fetchTopVdpVehicles({
-          clientId: ga4Id,
-          from: p.curFrom,
-          to: p.curTo,
-          priorFrom: p.priFrom,
-          priorTo: p.priTo,
-          limit: 5,
-          onCancelCheck: () => isStale(),
-        }),
-        fetchChannelBreakdown({
-          clientId: ga4Id,
-          from: p.curFrom,
-          to: p.curTo,
-          pageTypeFilter: 'ALL',
-          tab: 'all',
-          onCancelCheck: () => isStale(),
-        }),
-        fetchChannelBreakdown({
-          clientId: ga4Id,
-          from: p.curFrom,
-          to: p.curTo,
-          pageTypeFilter: 'VDP',
-          tab: 'vdp',
-          onCancelCheck: () => isStale(),
-        }),
-        fetchConditionBreakdown({
-          clientId: ga4Id,
-          from: p.curFrom,
-          to: p.curTo,
-          tab: 'vdp',
-          onCancelCheck: () => isStale(),
-        }),
+        track(
+          fetchOverviewBundle({
+            clientId: ga4Id,
+            from: curFrom,
+            to: curTo,
+            onCancelCheck: () => isStale(),
+          })
+        ),
+        track(
+          fetchOverviewBundle({
+            clientId: ga4Id,
+            from: priFrom,
+            to: priTo,
+            onCancelCheck: () => isStale(),
+          })
+        ),
+        track(
+          fetchVdpDailyFiltered({
+            clientId: ga4Id,
+            from: curFrom,
+            to: curTo,
+            tab: 'vdp',
+            onCancelCheck: () => isStale(),
+          })
+        ),
+        track(
+          fetchVdpDailyFiltered({
+            clientId: ga4Id,
+            from: priFrom,
+            to: priTo,
+            tab: 'vdp',
+            onCancelCheck: () => isStale(),
+          })
+        ),
+        track(
+          fetchTopVdpVehicles({
+            clientId: ga4Id,
+            from: curFrom,
+            to: curTo,
+            priorFrom: priFrom,
+            priorTo: priTo,
+            limit: 5,
+            onCancelCheck: () => isStale(),
+          })
+        ),
+        track(
+          fetchChannelBreakdown({
+            clientId: ga4Id,
+            from: curFrom,
+            to: curTo,
+            pageTypeFilter: 'ALL',
+            tab: 'all',
+            onCancelCheck: () => isStale(),
+          })
+        ),
+        track(
+          fetchChannelBreakdown({
+            clientId: ga4Id,
+            from: curFrom,
+            to: curTo,
+            pageTypeFilter: 'VDP',
+            tab: 'vdp',
+            onCancelCheck: () => isStale(),
+          })
+        ),
+        track(
+          fetchConditionBreakdown({
+            clientId: ga4Id,
+            from: curFrom,
+            to: curTo,
+            tab: 'vdp',
+            onCancelCheck: () => isStale(),
+          })
+        ),
       ]);
 
       if (isStale()) return;
@@ -200,9 +230,12 @@ export default function OverviewView() {
         setConditionRows([]);
       }
     } finally {
-      if (!isStale()) setLoading(false);
+      if (!isStale()) {
+        setLoading(false);
+        setProgress(null);
+      }
     }
-  }, [canLoad, ga4Id, p.curFrom, p.curTo, p.priFrom, p.priTo]);
+  }, [canLoad, ga4Id, curFrom, curTo, priFrom, priTo]);
 
   useEffect(() => {
     if (dealersLoading) return undefined;
@@ -220,12 +253,12 @@ export default function OverviewView() {
   const ratePri = safeDiv(vdpPriTotal, pagePri) * 100;
 
   const curDates = useMemo(
-    () => enumerateDatesInclusive(p.curFrom, p.curTo),
-    [p.curFrom, p.curTo]
+    () => enumerateDatesInclusive(curFrom, curTo),
+    [curFrom, curTo]
   );
   const priDates = useMemo(
-    () => enumerateDatesInclusive(p.priFrom, p.priTo),
-    [p.priFrom, p.priTo]
+    () => enumerateDatesInclusive(priFrom, priTo),
+    [priFrom, priTo]
   );
 
   const seriesCur = useMemo(
@@ -246,7 +279,7 @@ export default function OverviewView() {
       labels,
       datasets: [
         {
-          label: `${p.curLabel} (current)`,
+          label: `${curLabel} (current)`,
           data: seriesCur,
           borderColor: '#2563eb',
           backgroundColor: 'rgba(37,99,235,.08)',
@@ -256,7 +289,7 @@ export default function OverviewView() {
           borderWidth: 2.5,
         },
         {
-          label: `${p.priLabel} (prior)`,
+          label: `${priLabel} (prior)`,
           data: seriesPri,
           borderColor: '#94a3b8',
           backgroundColor: 'transparent',
@@ -267,7 +300,7 @@ export default function OverviewView() {
         },
       ],
     };
-  }, [seriesCur, seriesPri, p]);
+  }, [seriesCur, seriesPri, curLabel, priLabel]);
 
   const lineOptions = useMemo(
     () => ({
@@ -371,6 +404,11 @@ export default function OverviewView() {
   );
 
   const isBusy = dealersLoading || loading;
+  const loadPercent = progress?.total
+    ? Math.round((Number(progress.completed) / Number(progress.total)) * 100)
+    : isBusy
+      ? 0
+      : null;
 
   if (!dealersLoading && (!client || isAllDealer || !ga4Id)) {
     return (
@@ -389,15 +427,13 @@ export default function OverviewView() {
   }
 
   return (
-    <div className={`vdp-view${isBusy ? ' vdp-view--loading' : ''}`}>
-      <VdpLoadingBanner
-        active={isBusy}
-        label="Loading overview…"
-        detail="Fetching KPIs, daily series, top vehicles, and channel mix"
-      />
+    <div className={`vdp-view${isBusy ? ' vdp-view--card-loading' : ''}`}>
+      <VdpLoadingCard active={isBusy} percent={loadPercent} />
       <Toolbar>
-        <ToolbarGroup label="Comparison">
-          <Seg value={mode} options={COMPARE_OPTS} onChange={setMode} />
+        <ToolbarGroup label="Period">
+          <span className="vdp-period-hint">
+            {curLabel} vs {priLabel}
+          </span>
         </ToolbarGroup>
       </Toolbar>
 
@@ -418,58 +454,44 @@ export default function OverviewView() {
 
       <div className="vdp-kpi-grid">
         <Kpi
-          label={`Page Views · ${p.curLabel}`}
-          value={isBusy ? '…' : fmt(pageCur)}
-          delta={isBusy ? null : pvMom}
-          sub={isBusy ? 'Loading…' : `vs ${fmt(pagePri)} (${p.priLabel})`}
+          label={`Page Views · ${curLabel}`}
+          value={fmt(pageCur)}
+          delta={pvMom}
+          sub={`vs ${fmt(pagePri)} (${priLabel})`}
         />
         <Kpi
-          label={`VDP Views · ${p.curLabel}`}
-          value={isBusy ? '…' : fmt(vdpCurTotal)}
-          delta={isBusy ? null : vdpMom}
-          sub={isBusy ? 'Loading…' : `vs ${fmt(vdpPriTotal)} (${p.priLabel})`}
+          label={`VDP Views · ${curLabel}`}
+          value={fmt(vdpCurTotal)}
+          delta={vdpMom}
+          sub={`vs ${fmt(vdpPriTotal)} (${priLabel})`}
         />
         <Kpi
           label="VDP Rate (VDP / Page Views)"
-          value={isBusy ? '…' : `${rateCur.toFixed(1)}%`}
-          delta={isBusy ? null : rateCur - ratePri}
-          sub={isBusy ? 'Loading…' : `vs ${ratePri.toFixed(1)}% prior`}
+          value={`${rateCur.toFixed(1)}%`}
+          delta={rateCur - ratePri}
+          sub={`vs ${ratePri.toFixed(1)}% prior`}
           isPP
         />
         <Kpi
           label="Unique Visitors"
-          value={isBusy ? '…' : fmt(uniqueUsers)}
-          sub={p.curLabel}
+          value={fmt(uniqueUsers)}
+          sub={curLabel}
         />
       </div>
 
       <div className="vdp-grid-2 vdp-grid-2--overview">
         <Card
-          title={
-            mode === 'mtd'
-              ? 'Cumulative Page Views — Month to Date'
-              : 'Cumulative Page Views — Full Month'
-          }
-          sub={
-            isBusy
-              ? 'Loading daily series…'
-              : `Running total, ${p.curLabel} vs. ${p.priLabel} (same calendar days last month)`
-          }
+          title="Cumulative Page Views"
+          sub={`Running total, ${curLabel} vs. ${priLabel} (aligned prior period)`}
         >
-          {isBusy && !seriesCur.length ? (
-            <VdpLoadingBlock label="Loading daily graph…" minHeight={180} />
-          ) : (
-            <VdpChart type="line" data={lineData} options={lineOptions} height={180} />
-          )}
+          <VdpChart type="line" data={lineData} options={lineOptions} height={180} />
         </Card>
 
         <Card
           title="Top 5 Vehicles by VDP Views"
           sub="Current comparison period · smart_final_data"
         >
-          {isBusy && !topVehicles.length ? (
-            <VdpLoadingBlock label="Loading top vehicles…" minHeight={140} />
-          ) : !topVehicles.length ? (
+          {!topVehicles.length ? (
             <div style={{ color: 'var(--vdp-muted)', fontSize: 13, padding: 12 }}>
               No VDP vehicle data for this period.
             </div>
@@ -508,9 +530,7 @@ export default function OverviewView() {
           title="Views by Source"
           sub="Page views & VDP views, current comparison period"
         >
-          {isBusy && !sourceChart.labels.length ? (
-            <VdpLoadingBlock label="Loading channel breakdown…" minHeight={160} />
-          ) : !sourceChart.labels.length ? (
+          {!sourceChart.labels.length ? (
             <div style={{ color: 'var(--vdp-muted)', fontSize: 13, padding: 12 }}>
               No channel data for this period.
             </div>
@@ -528,12 +548,9 @@ export default function OverviewView() {
           title="New vs. Used — VDP Share"
           sub="Current comparison period · smart_final_data"
         >
-          {isBusy &&
-          !(newUsedChart.datasets[0]?.data?.[0] || newUsedChart.datasets[0]?.data?.[1]) ? (
-            <VdpLoadingBlock label="Loading condition share…" minHeight={160} />
-          ) : !(
-              newUsedChart.datasets[0]?.data?.[0] || newUsedChart.datasets[0]?.data?.[1]
-            ) ? (
+          {!(
+            newUsedChart.datasets[0]?.data?.[0] || newUsedChart.datasets[0]?.data?.[1]
+          ) ? (
             <div style={{ color: 'var(--vdp-muted)', fontSize: 13, padding: 12 }}>
               No New/Used VDP data for this period.
             </div>

@@ -55,7 +55,7 @@ export function matrixFromRpcRows(rpcRows, dealers, failedClientIds = null) {
       byClient.get(clientId).push({
         name: bucket,
         value: Number(row.views) || 0,
-        color: colorForChannel(bucket),
+        color: row._color || colorForChannel(bucket),
         pct: 0,
       });
     }

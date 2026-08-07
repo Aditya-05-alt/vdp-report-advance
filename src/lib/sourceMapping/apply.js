@@ -96,6 +96,51 @@ export function mapSourceMediumMatrixRows(rpcRows, channels, mapping) {
   return [...totals.values()].filter((r) => r.views > 0);
 }
 
+function normName(name) {
+  return String(name ?? '')
+    .toLowerCase()
+    .replace(/[\s_-]+/g, '');
+}
+
+/**
+ * Fast All Dealers path: MV rows are already GA4 channels.
+ * Align column names/colors to Source Mapping channel defs when names match
+ * (e.g. "Organic Search" → admin "Organic Search"). Unmatched stay as-is.
+ */
+export function mapGa4ChannelMatrixRows(rpcRows, channels) {
+  const byNorm = new Map();
+  for (const ch of channels || []) {
+    if (!ch?.name || ch.id === UNMAPPED_ID) continue;
+    byNorm.set(normName(ch.name), ch);
+  }
+
+  const totals = new Map();
+  for (const row of rpcRows || []) {
+    const clientId = String(row.client_id ?? '').trim();
+    const rawBucket = String(row.channel_bucket || '(not set)');
+    if (!clientId || !rawBucket) continue;
+
+    const matched = byNorm.get(normName(rawBucket));
+    const bucket = matched?.name || rawBucket;
+    const key = `${clientId}|||${bucket}`;
+    const prev = totals.get(key);
+    const views = Number(row.views) || 0;
+    if (prev) {
+      prev.views += views;
+    } else {
+      totals.set(key, {
+        client_id: clientId,
+        dealer_name: row.dealer_name,
+        channel_bucket: bucket,
+        views,
+        _color: matched?.color || null,
+      });
+    }
+  }
+
+  return [...totals.values()].filter((r) => r.views > 0);
+}
+
 /** Build Map rawPairKey → channelId from API mapping object or entries. */
 export function toMappingMap(mapping) {
   if (mapping instanceof Map) return mapping;

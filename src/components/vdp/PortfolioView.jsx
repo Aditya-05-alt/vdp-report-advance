@@ -9,23 +9,15 @@ import {
 } from '@/lib/api/allDealerChannelMatrix';
 import { colorForChannel } from '@/lib/ga4/channelDisplay';
 import { fmt, pct, momClass, safeDiv } from '@/lib/vdp/aggregates';
-import { buildPeriods } from '@/lib/vdp/mockData';
 import VdpChart from './VdpChart';
-import VdpLoadingBanner, { VdpLoadingBlock } from './VdpLoadingBanner';
+import { VdpLoadingCard } from './VdpLoadingBanner';
+import { useVdpDateRange } from './VdpDateRangeContext';
 import { Card, Kpi, Seg, Toolbar, ToolbarGroup } from './VdpUi';
-
-const COMPARE_OPTS = [
-  { value: 'mtd', label: 'MTD vs Last Month (same dates)' },
-  { value: 'mom', label: 'Full Last Month vs Prior Month' },
-];
 
 const METRIC_OPTS = [
   { value: 'page', label: 'Page Views' },
   { value: 'vdp', label: 'VDP Views' },
 ];
-
-/** Live calendar periods for API (not the mock seed date). */
-const LIVE_PERIODS = buildPeriods(new Date());
 
 function dealerIncludedOnTab(dealer, metric) {
   if (metric === 'vdp') return dealer?.showAllDealersVdp !== false;
@@ -86,7 +78,6 @@ export default function PortfolioView() {
     dealerCategoryFilter,
   } = useClient();
 
-  const [mode, setMode] = useState('mtd');
   const [metric, setMetric] = useState('page');
   const [channelId, setChannelId] = useState('all');
   const [sort, setSort] = useState({ k: 'pv1', dir: -1 });
@@ -101,7 +92,14 @@ export default function PortfolioView() {
   const cancelRef = useRef(false);
   const loadGenRef = useRef(0);
 
-  const p = LIVE_PERIODS[mode];
+  const {
+    from: curFrom,
+    to: curTo,
+    priorFrom: priFrom,
+    priorTo: priTo,
+    curLabel,
+    priLabel,
+  } = useVdpDateRange();
   const metricLabel = metric === 'page' ? 'Page Views' : 'VDP Views';
 
   const portfolioDealers = useMemo(
@@ -110,7 +108,7 @@ export default function PortfolioView() {
   );
 
   const loadMatrix = useCallback(async () => {
-    if (!portfolioDealers.length || !p.curFrom || !p.curTo) {
+    if (!portfolioDealers.length || !curFrom || !curTo) {
       setPageCur({ rows: [], columns: [] });
       setPagePri({ rows: [], columns: [] });
       setVdpCur({ rows: [], columns: [] });
@@ -153,10 +151,10 @@ export default function PortfolioView() {
 
     try {
       const [pageCurrent, pagePrior, vdpCurrent, vdpPrior] = await Promise.all([
-        fetchOne(p.curFrom, p.curTo, 'ALL', 0),
-        fetchOne(p.priFrom, p.priTo, 'ALL', 1),
-        fetchOne(p.curFrom, p.curTo, 'VDP', 2),
-        fetchOne(p.priFrom, p.priTo, 'VDP', 3),
+        fetchOne(curFrom, curTo, 'ALL', 0),
+        fetchOne(priFrom, priTo, 'ALL', 1),
+        fetchOne(curFrom, curTo, 'VDP', 2),
+        fetchOne(priFrom, priTo, 'VDP', 3),
       ]);
 
       if (isStale()) return;
@@ -186,7 +184,7 @@ export default function PortfolioView() {
         setProgress(null);
       }
     }
-  }, [portfolioDealers, p.curFrom, p.curTo, p.priFrom, p.priTo]);
+  }, [portfolioDealers, curFrom, curTo, priFrom, priTo]);
 
   useEffect(() => {
     if (dealersLoading) return undefined;
@@ -326,14 +324,14 @@ export default function PortfolioView() {
       labels: ordered.map((r) => r.dealer?.name || 'Dealer'),
       datasets: [
         {
-          label: p.curLabel,
+          label: curLabel,
           data: ordered.map((r) => r.total),
           backgroundColor: '#2563eb',
           borderRadius: 4,
         },
       ],
     };
-  }, [filteredDealerRows, p.curLabel]);
+  }, [filteredDealerRows, curLabel]);
 
   const barOptions = useMemo(
     () => ({
@@ -347,6 +345,8 @@ export default function PortfolioView() {
 
   const openDealer = (dealer) => {
     if (dealer) pickClient(dealer);
+    setLoading(true);
+    setProgress({ completed: 0, total: 4 });
     router.push('/dashboard/overview');
   };
 
@@ -358,23 +358,17 @@ export default function PortfolioView() {
   };
 
   const isBusy = dealersLoading || loading;
-  const periodSub = `${metricLabel}, ${p.curLabel} — click a dealer to open it.`;
+  const loadPercent = progress?.total
+    ? Math.round((Number(progress.completed) / Number(progress.total)) * 100)
+    : isBusy
+      ? 0
+      : null;
+  const periodSub = `${metricLabel}, ${curLabel} — click a dealer to open it.`;
 
   return (
-    <div className={`vdp-view${isBusy ? ' vdp-view--loading' : ''}`}>
-      <VdpLoadingBanner
-        active={isBusy}
-        label="Loading All Dealers…"
-        detail={
-          progress?.total
-            ? `Fetching channel matrix (${Math.round(progress.completed)}/${progress.total})`
-            : 'Fetching channel matrix for dealers'
-        }
-      />
+    <div className={`vdp-view${isBusy ? ' vdp-view--card-loading' : ''}`}>
+      <VdpLoadingCard active={isBusy} percent={loadPercent} />
       <Toolbar>
-        <ToolbarGroup label="Comparison">
-          <Seg value={mode} options={COMPARE_OPTS} onChange={setMode} />
-        </ToolbarGroup>
         <ToolbarGroup label="Metric">
           <Seg value={metric} options={METRIC_OPTS} onChange={setMetric} />
         </ToolbarGroup>
@@ -398,7 +392,7 @@ export default function PortfolioView() {
       <div className="vdp-kpi-grid">
         <Kpi
           label="Dealers Tracked"
-          value={isBusy ? '…' : filteredDealerRows.length}
+          value={filteredDealerRows.length}
           sub={
             dealerCategoryFilter
               ? `${channelLabel} · ${dealerCategoryFilter}`
@@ -406,13 +400,13 @@ export default function PortfolioView() {
           }
         />
         <Kpi
-          label={`${metricLabel} · ${p.curLabel}`}
-          value={isBusy ? '…' : fmt(displayAllTotals.total)}
+          label={`${metricLabel} · ${curLabel}`}
+          value={fmt(displayAllTotals.total)}
           sub={channelLabel}
         />
         <Kpi
-          label={`Top Channel · ${p.curLabel}`}
-          value={isBusy ? '…' : topChannel?.name || '—'}
+          label={`Top Channel · ${curLabel}`}
+          value={topChannel?.name || '—'}
           sub={
             topChannel
               ? `${fmt(topChannel.total)} ${metricLabel.toLowerCase()}`
@@ -422,13 +416,7 @@ export default function PortfolioView() {
         <Kpi
           label="Data source"
           value="Live API"
-          sub={
-            progress
-              ? `Loading ${Math.round(progress.completed)}/${progress.total}…`
-              : error
-                ? 'Partial / check warning'
-                : 'all-dealers-channel-matrix'
-          }
+          sub={error ? 'Partial / check warning' : 'all-dealers-channel-matrix'}
         />
       </div>
 
@@ -449,21 +437,10 @@ export default function PortfolioView() {
 
       <Card
         title={`${metricLabel} by Dealer — ${channelLabel}`}
-        sub={`${p.curLabel}${isBusy ? ' · loading…' : ''}`}
+        sub={curLabel}
         style={{ marginBottom: 16 }}
       >
-        {isBusy && !filteredDealerRows.length ? (
-          <VdpLoadingBlock
-            label={`Loading dealer channel data${
-              progress
-                ? ` (${Math.round(progress.completed)}/${progress.total})`
-                : '…'
-            }`}
-            minHeight={120}
-          />
-        ) : (
-          <VdpChart type="bar" data={barData} options={barOptions} height={110} />
-        )}
+        <VdpChart type="bar" data={barData} options={barOptions} height={110} />
       </Card>
 
       <Card
@@ -471,16 +448,7 @@ export default function PortfolioView() {
         sub={periodSub}
         style={{ marginBottom: 16 }}
       >
-        {isBusy && !channelGrid.dealerRows.length ? (
-          <VdpLoadingBlock
-            label={`Loading channel matrix${
-              progress
-                ? ` ${Math.round(progress.completed)}/${progress.total}`
-                : '…'
-            }`}
-            minHeight={160}
-          />
-        ) : !channelGrid.dealerRows.length ? (
+        {!channelGrid.dealerRows.length ? (
           <div style={{ color: 'var(--vdp-muted)', fontSize: 13, padding: 12 }}>
             No dealer channel data for this period.
             {!portfolioDealers.length
@@ -590,11 +558,9 @@ export default function PortfolioView() {
             </span>
           </>
         }
-        sub={`Comparing ${p.curLabel} to ${p.priLabel}, filtered to ${channelLabel}`}
+        sub={`Comparing ${curLabel} to ${priLabel}, filtered to ${channelLabel}`}
       >
-        {isBusy && !dealerSummaryRows.length ? (
-          <VdpLoadingBlock label="Loading dealer comparison…" minHeight={140} />
-        ) : !dealerSummaryRows.length ? (
+        {!dealerSummaryRows.length ? (
           <div style={{ color: 'var(--vdp-muted)', fontSize: 13, padding: 12 }}>
             No dealer comparison data for this period.
           </div>

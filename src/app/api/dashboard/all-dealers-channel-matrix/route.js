@@ -1,14 +1,15 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
-import {
-  mapSourceMediumMatrixRows,
-  toMappingMap,
-} from '@/lib/sourceMapping/apply';
+import { mapGa4ChannelMatrixRows } from '@/lib/sourceMapping/apply';
 import { loadSourceMapping } from '@/lib/sourceMapping/store';
 
 export const maxDuration = 120;
 
-/** Server-side all-dealer channel matrix (source mapping → column names). */
+/**
+ * All-dealer channel matrix — fast path via materialized views:
+ *   mv_ga4_channel_daily | mv_ga4_channel_monthly | mv_ga4_channel_yearly
+ * through get_all_dealers_channel_matrix_advance.
+ */
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const from = searchParams.get('from')?.slice(0, 10);
@@ -43,28 +44,6 @@ export async function GET(request) {
     p_client_ids: clientIds.length ? clientIds : null,
   };
 
-  const mappingCfg = await loadSourceMapping(supabase);
-  const mapping = toMappingMap(mappingCfg.mapping);
-
-  const sm = await supabase.rpc(
-    'get_all_dealers_source_medium_matrix_advance',
-    rpcParams
-  );
-
-  if (!sm.error) {
-    const mappedRows = mapSourceMediumMatrixRows(
-      sm.data || [],
-      mappingCfg.channels,
-      mapping
-    );
-    return NextResponse.json({ data: mappedRows, mapped: true });
-  }
-
-  console.warn(
-    '[all-dealers-channel-matrix] source/medium RPC unavailable, falling back:',
-    sm.error.message
-  );
-
   const { data, error } = await supabase.rpc(
     'get_all_dealers_channel_matrix_advance',
     rpcParams
@@ -76,8 +55,25 @@ export async function GET(request) {
       error.message,
       clientIds.length ? `chunk=${clientIds.length}` : 'all'
     );
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    const hint = /mv_ga4_channel|does not exist|schema cache/i.test(
+      error.message || ''
+    )
+      ? ' Ensure mv_ga4_channel_daily / monthly / yearly exist and get_all_dealers_channel_matrix_advance is deployed.'
+      : '';
+    return NextResponse.json({ error: error.message + hint }, { status: 500 });
   }
 
-  return NextResponse.json({ data: data ?? [], mapped: false });
+  // Align column labels/colors with Source Mapping channel names (no raw scan).
+  let rows = data ?? [];
+  try {
+    const mappingCfg = await loadSourceMapping(supabase);
+    rows = mapGa4ChannelMatrixRows(rows, mappingCfg.channels);
+  } catch (err) {
+    console.warn(
+      '[all-dealers-channel-matrix] mapping align skipped:',
+      err?.message
+    );
+  }
+
+  return NextResponse.json({ data: rows, mapped: true, source: 'mv' });
 }

@@ -4,27 +4,28 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useClient } from '@/components/dashboard/ClientContext';
 import { fetchTrafficBySource } from '@/lib/api/trafficBySource';
 import { fmt, pct, momClass } from '@/lib/vdp/aggregates';
-import { buildPeriods } from '@/lib/vdp/mockData';
 import { isAllDealerClient } from '@/lib/dashboard/allDealers';
 import VdpChart from './VdpChart';
-import VdpLoadingBanner, { VdpLoadingBlock } from './VdpLoadingBanner';
+import { VdpLoadingCard } from './VdpLoadingBanner';
+import { useVdpDateRange } from './VdpDateRangeContext';
+import { useSoftLoadPercent } from './useSoftLoadPercent';
 import { Card, Seg, Toolbar, ToolbarGroup } from './VdpUi';
-
-const COMPARE_OPTS = [
-  { value: 'mtd', label: 'MTD vs Last Month (same dates)' },
-  { value: 'mom', label: 'Full Last Month vs Prior Month' },
-];
 
 const METRIC_OPTS = [
   { value: 'page', label: 'Page Views' },
   { value: 'vdp', label: 'VDP Views' },
 ];
 
-const LIVE_PERIODS = buildPeriods(new Date());
-
 export default function TrafficView() {
   const { client, loading: dealersLoading, isAllDealer } = useClient();
-  const [mode, setMode] = useState('mtd');
+  const {
+    from: curFrom,
+    to: curTo,
+    priorFrom: priFrom,
+    priorTo: priTo,
+    curLabel,
+    priLabel,
+  } = useVdpDateRange();
   const [metric, setMetric] = useState('page');
   const [sort, setSort] = useState({ k: 'pv1', dir: -1 });
   const [rows, setRows] = useState([]);
@@ -33,12 +34,11 @@ export default function TrafficView() {
   const cancelRef = useRef(false);
   const loadGenRef = useRef(0);
 
-  const p = LIVE_PERIODS[mode];
   const ga4Id = String(client?.ga4CustomerId || '').trim();
   const canLoad = Boolean(ga4Id) && !isAllDealerClient(client) && !isAllDealer;
 
   const load = useCallback(async () => {
-    if (!canLoad || !p.curFrom || !p.curTo) {
+    if (!canLoad || !curFrom || !curTo) {
       setRows([]);
       return;
     }
@@ -54,10 +54,10 @@ export default function TrafficView() {
     try {
       const data = await fetchTrafficBySource({
         clientId: ga4Id,
-        from: p.curFrom,
-        to: p.curTo,
-        priorFrom: p.priFrom,
-        priorTo: p.priTo,
+        from: curFrom,
+        to: curTo,
+        priorFrom: priFrom,
+        priorTo: priTo,
         onCancelCheck: () => isStale(),
       });
       if (isStale()) return;
@@ -70,7 +70,7 @@ export default function TrafficView() {
     } finally {
       if (!isStale()) setLoading(false);
     }
-  }, [canLoad, ga4Id, p.curFrom, p.curTo, p.priFrom, p.priTo]);
+  }, [canLoad, ga4Id, curFrom, curTo, priFrom, priTo]);
 
   useEffect(() => {
     if (dealersLoading) return undefined;
@@ -93,20 +93,20 @@ export default function TrafficView() {
       labels: barSrc.map((r) => r.source),
       datasets: [
         {
-          label: p.curLabel,
+          label: curLabel,
           data: barSrc.map((r) => r[key + '1']),
           backgroundColor: barSrc.map((r) => r.color),
           borderRadius: 4,
         },
         {
-          label: p.priLabel,
+          label: priLabel,
           data: barSrc.map((r) => r[key + '0']),
           backgroundColor: '#e2e8f0',
           borderRadius: 4,
         },
       ],
     };
-  }, [rows, metric, p]);
+  }, [rows, metric, curLabel, priLabel]);
 
   const barOptions = useMemo(
     () => ({
@@ -129,6 +129,7 @@ export default function TrafficView() {
   };
 
   const isBusy = dealersLoading || loading;
+  const loadPercent = useSoftLoadPercent(isBusy);
   const metricLabel = metric === 'page' ? 'Page Views' : 'VDP Views';
 
   if (!dealersLoading && (!client || isAllDealer || !ga4Id)) {
@@ -148,16 +149,9 @@ export default function TrafficView() {
   }
 
   return (
-    <div className={`vdp-view${isBusy ? ' vdp-view--loading' : ''}`}>
-      <VdpLoadingBanner
-        active={isBusy}
-        label="Loading traffic by source…"
-        detail="Fetching page and VDP views by channel"
-      />
+    <div className={`vdp-view${isBusy ? ' vdp-view--card-loading' : ''}`}>
+      <VdpLoadingCard active={isBusy} percent={loadPercent} />
       <Toolbar>
-        <ToolbarGroup label="Comparison">
-          <Seg value={mode} options={COMPARE_OPTS} onChange={setMode} />
-        </ToolbarGroup>
         <ToolbarGroup label="Metric">
           <Seg value={metric} options={METRIC_OPTS} onChange={setMetric} />
         </ToolbarGroup>
@@ -180,16 +174,10 @@ export default function TrafficView() {
 
       <Card
         title="Views by Source — This Period vs. Comparable Period"
-        sub={
-          isBusy
-            ? 'Loading get_traffic_by_source_advance…'
-            : `${metricLabel}: ${p.curLabel} vs. ${p.priLabel}`
-        }
+        sub={`${metricLabel}: ${curLabel} vs. ${priLabel}`}
         style={{ marginBottom: 16 }}
       >
-        {isBusy && !rows.length ? (
-          <VdpLoadingBlock label="Loading traffic by source…" minHeight={140} />
-        ) : !rows.length ? (
+        {!rows.length ? (
           <div style={{ color: 'var(--vdp-muted)', fontSize: 13, padding: 12 }}>
             No channel traffic for this period.
           </div>
@@ -202,9 +190,7 @@ export default function TrafficView() {
         title="Source Detail"
         sub="Click a column header to sort · page views from smart_ga4_page_data"
       >
-        {isBusy && !sorted.length ? (
-          <VdpLoadingBlock label="Loading source detail…" minHeight={100} />
-        ) : !sorted.length ? (
+        {!sorted.length ? (
           <div style={{ color: 'var(--vdp-muted)', fontSize: 13, padding: 12 }}>
             No source rows for this period.
           </div>

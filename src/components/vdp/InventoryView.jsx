@@ -4,16 +4,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useClient } from '@/components/dashboard/ClientContext';
 import { fetchInventoryPerformance } from '@/lib/api/inventoryPerformance';
 import { fmt, pct, momClass, safeDiv } from '@/lib/vdp/aggregates';
-import { buildPeriods } from '@/lib/vdp/mockData';
 import { isAllDealerClient } from '@/lib/dashboard/allDealers';
 import VdpChart from './VdpChart';
-import VdpLoadingBanner, { VdpLoadingBlock } from './VdpLoadingBanner';
+import { VdpLoadingCard } from './VdpLoadingBanner';
+import { useVdpDateRange } from './VdpDateRangeContext';
+import { useSoftLoadPercent } from './useSoftLoadPercent';
 import { Card, Kpi, Seg, Toolbar, ToolbarGroup } from './VdpUi';
-
-const COMPARE_OPTS = [
-  { value: 'mtd', label: 'MTD vs Last Month (same dates)' },
-  { value: 'mom', label: 'Full Last Month vs Prior Month' },
-];
 
 const COND_OPTS = [
   { value: 'all', label: 'All' },
@@ -22,7 +18,6 @@ const COND_OPTS = [
 ];
 
 const PAGE_SIZE = 12;
-const LIVE_PERIODS = buildPeriods(new Date());
 
 function conditionClass(condition) {
   const c = String(condition || '').toLowerCase();
@@ -33,7 +28,14 @@ function conditionClass(condition) {
 
 export default function InventoryView() {
   const { client, loading: dealersLoading, isAllDealer } = useClient();
-  const [mode, setMode] = useState('mtd');
+  const {
+    from: curFrom,
+    to: curTo,
+    priorFrom: priFrom,
+    priorTo: priTo,
+    curLabel,
+    priLabel,
+  } = useVdpDateRange();
   const [make, setMake] = useState('all');
   const [cond, setCond] = useState('all');
   const [cat, setCat] = useState('all');
@@ -50,12 +52,11 @@ export default function InventoryView() {
   const loadGenRef = useRef(0);
   const searchTimer = useRef(null);
 
-  const p = LIVE_PERIODS[mode];
   const ga4Id = String(client?.ga4CustomerId || '').trim();
   const canLoad = Boolean(ga4Id) && !isAllDealerClient(client) && !isAllDealer;
 
   const load = useCallback(async () => {
-    if (!canLoad || !p.curFrom || !p.curTo) {
+    if (!canLoad || !curFrom || !curTo) {
       setRows([]);
       setMakeOptions([]);
       setCatOptions([]);
@@ -73,10 +74,10 @@ export default function InventoryView() {
     try {
       const result = await fetchInventoryPerformance({
         clientId: ga4Id,
-        from: p.curFrom,
-        to: p.curTo,
-        priorFrom: p.priFrom,
-        priorTo: p.priTo,
+        from: curFrom,
+        to: curTo,
+        priorFrom: priFrom,
+        priorTo: priTo,
         make,
         condition: cond,
         category: cat,
@@ -95,7 +96,7 @@ export default function InventoryView() {
     } finally {
       if (!isStale()) setLoading(false);
     }
-  }, [canLoad, ga4Id, p.curFrom, p.curTo, p.priFrom, p.priTo, make, cond, cat, search]);
+  }, [canLoad, ga4Id, curFrom, curTo, priFrom, priTo, make, cond, cat, search]);
 
   useEffect(() => {
     if (dealersLoading) return undefined;
@@ -288,6 +289,7 @@ export default function InventoryView() {
   };
 
   const isBusy = dealersLoading || loading;
+  const loadPercent = useSoftLoadPercent(isBusy);
 
   if (!dealersLoading && (!client || isAllDealer || !ga4Id)) {
     return (
@@ -303,16 +305,9 @@ export default function InventoryView() {
   }
 
   return (
-    <div className={`vdp-view${isBusy ? ' vdp-view--loading' : ''}`}>
-      <VdpLoadingBanner
-        active={isBusy}
-        label="Loading inventory…"
-        detail="Fetching vehicle VDP performance for this dealer"
-      />
+    <div className={`vdp-view${isBusy ? ' vdp-view--card-loading' : ''}`}>
+      <VdpLoadingCard active={isBusy} percent={loadPercent} />
       <Toolbar>
-        <ToolbarGroup label="Comparison">
-          <Seg value={mode} options={COMPARE_OPTS} onChange={resetPage(setMode)} />
-        </ToolbarGroup>
         <ToolbarGroup label="Make">
           <select
             className="vdp-select"
@@ -378,28 +373,24 @@ export default function InventoryView() {
 
       <div className="vdp-kpi-grid">
         <Kpi
-          label={`VDP Views · ${p.curLabel}`}
-          value={isBusy ? '…' : fmt(totalVdp1)}
-          delta={isBusy ? null : safeDiv(totalVdp1 - totalVdp0, totalVdp0) * 100}
-          sub={isBusy ? 'Loading…' : `vs ${fmt(totalVdp0)} (${p.priLabel})`}
+          label={`VDP Views · ${curLabel}`}
+          value={fmt(totalVdp1)}
+          delta={safeDiv(totalVdp1 - totalVdp0, totalVdp0) * 100}
+          sub={`vs ${fmt(totalVdp0)} (${priLabel})`}
         />
         <Kpi
           label="Unique VDP Views"
-          value={isBusy ? '…' : fmt(totalUniq)}
-          sub={
-            isBusy
-              ? 'Loading…'
-              : `${Math.floor(safeDiv(totalUniq, totalVdp1) * 100) || 0}% of total views`
-          }
+          value={fmt(totalUniq)}
+          sub={`${Math.floor(safeDiv(totalUniq, totalVdp1) * 100) || 0}% of total views`}
         />
         <Kpi
           label="Avg VDP Views / Vehicle"
-          value={isBusy ? '…' : fmt(safeDiv(totalVdp1, sorted.length))}
+          value={fmt(safeDiv(totalVdp1, sorted.length))}
           sub={`${sorted.length} vehicles in view`}
         />
         <Kpi
           label="Vehicles w/ 0 VDP Views"
-          value={isBusy ? '…' : zeroView}
+          value={zeroView}
           sub={zeroView > 0 ? 'Consider repricing / photos' : 'All vehicles getting views'}
         />
       </div>
@@ -410,15 +401,13 @@ export default function InventoryView() {
           title="VDP Views by Make"
           sub="New vs. Used, current comparison period"
         >
-          {isBusy && !sorted.length ? (
-            <VdpLoadingBlock label="Loading make chart…" minHeight={200} />
-          ) : !makeNames.length ? (
+          {!makeNames.length ? (
             <div style={{ color: 'var(--vdp-muted)', fontSize: 13, padding: 12 }}>
               No make data for these filters.
             </div>
           ) : (
             <VdpChart
-              key={`inv-make-${mode}-${make}-${cond}-${makeNames.join('|')}`}
+              key={`inv-make-${curFrom}-${curTo}-${make}-${cond}-${makeNames.join('|')}`}
               type="bar"
               data={makeData}
               options={makeOptionsChart}
@@ -432,15 +421,13 @@ export default function InventoryView() {
           title="VDP Views by Category"
           sub="Current comparison period · top categories"
         >
-          {isBusy && !sorted.length ? (
-            <VdpLoadingBlock label="Loading category chart…" minHeight={200} />
-          ) : !(catData.labels || []).length ? (
+          {!(catData.labels || []).length ? (
             <div style={{ color: 'var(--vdp-muted)', fontSize: 13, padding: 12 }}>
               No category data for these filters.
             </div>
           ) : (
             <VdpChart
-              key={`inv-cat-${mode}-${cat}-${(catData.labels || []).join('|')}`}
+              key={`inv-cat-${curFrom}-${curTo}-${cat}-${(catData.labels || []).join('|')}`}
               type="bar"
               data={catData}
               options={catOptionsChart}
@@ -462,10 +449,7 @@ export default function InventoryView() {
         }
         sub="Click a column header to sort. Data from get_inventory_performance_advance · smart_final_data"
       >
-        {isBusy && !sorted.length ? (
-          <VdpLoadingBlock label="Loading inventory…" minHeight={160} />
-        ) : (
-          <>
+        <>
             <table className="vdp-table">
               <thead>
                 <tr>
@@ -553,7 +537,6 @@ export default function InventoryView() {
               </div>
             </div>
           </>
-        )}
       </Card>
     </div>
   );

@@ -3604,7 +3604,70 @@ body {
 .cdr-cell.end:hover { color: #14171C; }
 
 .cdr-status,
-.cdr-foot { flex-shrink: 0; }
+.cdr-foot,
+.cdr-compare { flex-shrink: 0; }
+
+.cdr-compare {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  padding: 10px 4px 2px;
+  border-top: 1px solid var(--bd);
+  margin-top: 4px;
+}
+.cdr-compare-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+.cdr-compare-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--t2);
+}
+.cdr-compare-track {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  border-radius: 999px;
+  border: 1px solid var(--bd);
+  background: var(--s3);
+  padding: 0;
+  cursor: pointer;
+}
+.cdr-compare-track.on {
+  background: var(--blue, #2563eb);
+  border-color: var(--blue, #2563eb);
+}
+.cdr-compare-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.2s;
+}
+.cdr-compare-track.on .cdr-compare-thumb {
+  transform: translateX(16px);
+}
+.cdr-compare-range {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.cdr-compare-range-lbl {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--t3);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
 
 .cdr-status { display: flex; justify-content: center; }
 .cdr-status-chip {

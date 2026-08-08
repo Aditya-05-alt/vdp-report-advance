@@ -11,9 +11,12 @@ const roboto = Roboto({
 });
 
 export const metadata = {
-  title: 'SmartAnalytics — Sign in',
+  title: 'SmartAnalytics — VDP & Page Views',
   description: 'Dealer analytics dashboard for RV, Auto, Powersports & Marine.',
-  icons: { icon: '/favicon.svg' },
+  icons: {
+    icon: [{ url: '/favicon.svg', type: 'image/svg+xml' }],
+    shortcut: '/favicon.svg',
+  },
 };
 
 export const viewport = {

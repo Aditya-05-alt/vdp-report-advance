@@ -8,25 +8,45 @@ import {
 export const VDP_DEFAULT_DATE_RANGE = 'current_month';
 
 /**
- * Resolve CalendarRangePicker value → current + prior-month-aligned compare window.
- * Used by All Dealers + Overview / Traffic / Inventory.
+ * Resolve primary report period (+ optional compare window).
+ * When compareEnabled and no custom compare range → prior-month-aligned.
  */
-export function resolveVdpReportPeriod(pickerValue) {
+export function resolveVdpReportPeriod(
+  pickerValue,
+  { compareEnabled = true, compareDateRange = null } = {}
+) {
   const resolved =
     resolveRangePickerValue(pickerValue) ||
     resolveRangePickerValue(VDP_DEFAULT_DATE_RANGE);
 
   const from = resolved?.start || null;
   const to = resolved?.end || null;
-  const { compareFrom, compareTo } = previousMonthAlignedRange(from, to);
+
+  let priorFrom = null;
+  let priorTo = null;
+
+  if (compareEnabled) {
+    const custom = compareDateRange
+      ? resolveRangePickerValue(compareDateRange)
+      : null;
+    if (custom?.start && custom?.end) {
+      priorFrom = custom.start;
+      priorTo = custom.end;
+    } else {
+      const aligned = previousMonthAlignedRange(from, to);
+      priorFrom = aligned.compareFrom;
+      priorTo = aligned.compareTo;
+    }
+  }
 
   return {
     from,
     to,
-    priorFrom: compareFrom,
-    priorTo: compareTo,
+    priorFrom,
+    priorTo,
     curLabel: formatRangeLabel(from, to) || 'Current',
-    priLabel: formatRangeLabel(compareFrom, compareTo) || 'Prior',
+    priLabel: formatRangeLabel(priorFrom, priorTo) || 'Prior',
     preset: resolved?.preset || 'custom',
+    compareEnabled: Boolean(compareEnabled),
   };
 }

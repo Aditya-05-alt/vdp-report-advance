@@ -167,11 +167,24 @@ export function rangePickerValueFromISO(from, to) {
   return { start: from, end: to, preset };
 }
 
-export default function CalendarRangePicker({ value, onChange, popClassName = '' }) {
+/**
+ * @param {object} [props.comparePeriod]
+ * @param {boolean} props.comparePeriod.enabled
+ * @param {() => void} props.comparePeriod.onToggle
+ * @param {unknown} [props.comparePeriod.value]
+ * @param {(next: unknown) => void} [props.comparePeriod.onChange]
+ */
+export default function CalendarRangePicker({
+  value,
+  onChange,
+  popClassName = '',
+  comparePeriod = null,
+}) {
   const [open, setOpen] = useState(false);
   const [popPos, setPopPos] = useState({ top: 0, left: 0 });
   const triggerRef = useRef(null);
   const popRef = useRef(null);
+  const showCompare = Boolean(comparePeriod);
 
   const close = useCallback(() => setOpen(false), []);
   const toggle = useCallback(() => setOpen((o) => !o), []);
@@ -181,6 +194,8 @@ export default function CalendarRangePicker({ value, onChange, popClassName = ''
     function onPointer(e) {
       if (triggerRef.current?.contains(e.target)) return;
       if (popRef.current?.contains(e.target)) return;
+      // Nested compare calendar also portals a .cdr-pop
+      if (e.target?.closest?.('.cdr-pop')) return;
       close();
     }
     function onKey(e) {
@@ -197,16 +212,17 @@ export default function CalendarRangePicker({ value, onChange, popClassName = ''
   useLayoutEffect(() => {
     if (!open || !triggerRef.current) return;
     const pad = 12;
+    const popH = showCompare ? POP_H + 72 : POP_H;
     const r = triggerRef.current.getBoundingClientRect();
     let left = r.right - POP_W;
     left = Math.min(left, window.innerWidth - POP_W - pad);
     left = Math.max(pad, left);
     let top = r.bottom + 8;
-    if (top + POP_H > window.innerHeight - pad) {
-      top = Math.max(pad, r.top - POP_H - 8);
+    if (top + popH > window.innerHeight - pad) {
+      top = Math.max(pad, r.top - popH - 8);
     }
     setPopPos({ top, left });
-  }, [open]);
+  }, [open, showCompare]);
 
   const today = useMemo(() => {
     const t = new Date();
@@ -360,6 +376,36 @@ export default function CalendarRangePicker({ value, onChange, popClassName = ''
           <div className="cdr-status">
             <div className="cdr-status-chip">{statusText}</div>
           </div>
+
+          {showCompare && (
+            <div className="cdr-compare">
+              <label className="cdr-compare-switch">
+                <span className="cdr-compare-label">Compare period</span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={Boolean(comparePeriod.enabled)}
+                  className={`cdr-compare-track${comparePeriod.enabled ? ' on' : ''}`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    comparePeriod.onToggle?.();
+                  }}
+                >
+                  <span className="cdr-compare-thumb" />
+                </button>
+              </label>
+              {comparePeriod.enabled && typeof comparePeriod.onChange === 'function' && (
+                <div className="cdr-compare-range">
+                  <span className="cdr-compare-range-lbl">Prior range</span>
+                  <CalendarRangePicker
+                    value={comparePeriod.value}
+                    onChange={comparePeriod.onChange}
+                    popClassName={popClassName}
+                  />
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="cdr-foot">
             <div className="cdr-foot-left">

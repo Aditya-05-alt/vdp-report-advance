@@ -40,12 +40,24 @@ export default function VdpShell({ children }) {
     loading: dealersLoading,
     isAllDealer,
   } = useClient();
-  const { dateRange, setDateRange, to, curLabel } = useVdpDateRange();
+  const {
+    dateRange,
+    setDateRange,
+    to,
+    curLabel,
+    compareEnabled,
+    toggleCompareEnabled,
+    compareDateRange,
+    setCompareDateRange,
+    priorFrom,
+    priorTo,
+  } = useVdpDateRange();
   const [displayName, setDisplayName] = useState('Account');
 
   const activeView = viewFromPath(pathname);
   const isDealerView = DEALER_VIEWS.some((v) => v.id === activeView);
   const showDateRange = activeView !== 'source-mapping';
+  const showOverviewCompare = activeView === 'overview';
   const asOfLabel = to ? `Data through ${to}` : `Period · ${curLabel}`;
 
   const dealerList = useMemo(
@@ -103,6 +115,21 @@ export default function VdpShell({ children }) {
                 value={dateRange}
                 onChange={setDateRange}
                 popClassName="cdr-pop--vdp"
+                comparePeriod={
+                  showOverviewCompare
+                    ? {
+                        enabled: compareEnabled,
+                        onToggle: toggleCompareEnabled,
+                        value:
+                          compareDateRange || {
+                            start: priorFrom,
+                            end: priorTo,
+                            preset: 'custom',
+                          },
+                        onChange: setCompareDateRange,
+                      }
+                    : null
+                }
               />
             </div>
           )}
@@ -181,11 +208,6 @@ export default function VdpShell({ children }) {
           </div>
         )}
         {children}
-        <div className="vdp-footer-note">
-          Overview cards use <code>get_ga4_overview</code> / VDP totals RPCs.
-          Top 5 vehicles use <code>get_top_vdp_vehicles_advance</code> on{' '}
-          <code>smart_final_data</code>.
-        </div>
       </main>
     </div>
   );

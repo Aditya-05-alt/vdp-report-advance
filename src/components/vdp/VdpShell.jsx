@@ -9,6 +9,8 @@ import { useClient } from '@/components/dashboard/ClientContext';
 import { isAllDealerClient } from '@/lib/dashboard/allDealers';
 import CalendarRangePicker from '@/components/dashboard/CalendarRangePicker';
 import { useVdpDateRange } from '@/components/vdp/VdpDateRangeContext';
+import DealerViewsKeepAlive from '@/components/vdp/DealerViewsKeepAlive';
+import HomeViewsKeepAlive from '@/components/vdp/HomeViewsKeepAlive';
 
 const HOME_VIEWS = [
   { id: 'portfolio', href: '/dashboard', label: 'All Dealers' },
@@ -56,6 +58,7 @@ export default function VdpShell({ children }) {
 
   const activeView = viewFromPath(pathname);
   const isDealerView = DEALER_VIEWS.some((v) => v.id === activeView);
+  const isHomeView = HOME_VIEWS.some((v) => v.id === activeView);
   const showDateRange = activeView !== 'source-mapping';
   const showOverviewCompare = activeView === 'overview';
   const asOfLabel = to ? `Data through ${to}` : `Period · ${curLabel}`;
@@ -147,7 +150,7 @@ export default function VdpShell({ children }) {
                 key={item.id}
                 href={item.href}
                 className={`vdp-nav-home ${activeView === item.id ? 'active' : ''}`}
-                prefetch={false}
+                prefetch
               >
                 {item.label}
               </Link>
@@ -188,7 +191,7 @@ export default function VdpShell({ children }) {
                   key={tab.id}
                   href={tab.href}
                   className={`vdp-tab-btn ${activeView === tab.id ? 'active' : ''}`}
-                  prefetch={false}
+                  prefetch
                 >
                   {tab.label}
                 </Link>
@@ -207,7 +210,20 @@ export default function VdpShell({ children }) {
             ) : null}
           </div>
         )}
-        {children}
+        {isDealerView ? (
+          <DealerViewsKeepAlive
+            activeView={activeView}
+            clientKey={
+              client && !isAllDealerClient(client)
+                ? String(client.ga4CustomerId || client.id || '')
+                : 'none'
+            }
+          />
+        ) : isHomeView ? (
+          <HomeViewsKeepAlive activeView={activeView} />
+        ) : (
+          children
+        )}
       </main>
     </div>
   );

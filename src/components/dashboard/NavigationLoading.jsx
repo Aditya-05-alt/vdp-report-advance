@@ -39,6 +39,25 @@ function isInternalNavClick(event) {
     const currentPath = window.location.pathname;
     const currentSearch = window.location.search;
     if (next.pathname === currentPath && next.search === currentSearch) return false;
+    // Keep-alive tabs — skip the top progress bar for instant switches
+    const dealerTabs = [
+      '/dashboard/overview',
+      '/dashboard/traffic',
+      '/dashboard/inventory',
+    ];
+    if (dealerTabs.includes(next.pathname) && dealerTabs.includes(currentPath)) {
+      return false;
+    }
+    const homeTabs = ['/dashboard', '/dashboard/'];
+    const isHome =
+      homeTabs.includes(currentPath) || currentPath === '/dashboard';
+    const isNextHome =
+      homeTabs.includes(next.pathname) || next.pathname === '/dashboard';
+    const isSource = currentPath.startsWith('/dashboard/source-mapping');
+    const isNextSource = next.pathname.startsWith('/dashboard/source-mapping');
+    if ((isHome || isSource) && (isNextHome || isNextSource)) {
+      return false;
+    }
   } catch {
     return false;
   }

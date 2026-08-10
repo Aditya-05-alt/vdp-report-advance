@@ -1,7 +1,6 @@
 'use client';
 
-import PortfolioView from '@/components/vdp/PortfolioView';
-
-export default function OverviewPage() {
-  return <PortfolioView />;
+/** Rendered by HomeViewsKeepAlive in VdpShell (kept mounted across home tab switches). */
+export default function DashboardHomePage() {
+  return null;
 }

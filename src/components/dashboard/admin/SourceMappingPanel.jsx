@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useClient } from '@/components/dashboard/ClientContext';
 import {
   CHANNEL_PALETTE,
@@ -15,6 +15,35 @@ import { invalidateSourceMappingCache } from '@/lib/api/sourceMapping';
 import VdpLoadingBanner, { VdpLoadingBlock } from '@/components/vdp/VdpLoadingBanner';
 
 const MTD = buildPeriods(new Date()).mtd;
+const MODE_KEY = 'vdp_src_map_mode';
+const MAP_MODES = [
+  {
+    id: 'all',
+    label: 'All Dealers Mapping',
+    blurb: 'One shared mapping for every dealer. Preview totals use all dealers combined.',
+  },
+  {
+    id: 'multi',
+    label: 'Multi Dealer Mapping',
+    blurb: 'Same shared mapping rules; preview totals use the dealers you pick in the dropdown.',
+  },
+  {
+    id: 'single',
+    label: 'Default Single Dealer Mapping',
+    blurb: 'Same shared mapping rules; preview totals use one dealer for context.',
+  },
+];
+
+function readStoredMode() {
+  if (typeof window === 'undefined') return 'single';
+  try {
+    const v = window.sessionStorage.getItem(MODE_KEY);
+    if (v === 'all' || v === 'multi' || v === 'single') return v;
+  } catch {
+    /* ignore */
+  }
+  return 'single';
+}
 
 function fmt(n) {
   return Math.round(Number(n) || 0).toLocaleString();
@@ -31,8 +60,50 @@ function rulesFromMappingObj(mapping) {
   });
 }
 
+function mergeRawLists(lists) {
+  const map = new Map();
+  for (const rows of lists) {
+    for (const r of rows || []) {
+      const key = r.id || rawPairKey(r.rawSource, r.rawMedium);
+      const prev = map.get(key);
+      if (!prev) {
+        map.set(key, {
+          id: key,
+          rawSource: r.rawSource,
+          rawMedium: r.rawMedium,
+          pageViews: Number(r.pageViews) || 0,
+          vdpViews: Number(r.vdpViews) || 0,
+        });
+      } else {
+        prev.pageViews += Number(r.pageViews) || 0;
+        prev.vdpViews += Number(r.vdpViews) || 0;
+      }
+    }
+  }
+  return [...map.values()].sort(
+    (a, b) => b.pageViews - a.pageViews || a.rawSource.localeCompare(b.rawSource)
+  );
+}
+
+async function fetchRawForClient(clientId) {
+  const qs = new URLSearchParams({
+    clientId,
+    from: MTD.curFrom,
+    to: MTD.curTo,
+  });
+  const res = await fetch(`/api/dashboard/source-mapping/raw?${qs}`, {
+    credentials: 'same-origin',
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(json.error || `Failed to load raw sources (${res.status})`);
+  }
+  return json.rows || [];
+}
+
 export default function SourceMappingPanel() {
   const { dealers, client, loading: dealersLoading } = useClient();
+  const [mapMode, setMapModeState] = useState(readStoredMode);
   const [channels, setChannels] = useState(defaultChannels());
   const [mapping, setMapping] = useState(() =>
     Object.fromEntries(
@@ -44,6 +115,9 @@ export default function SourceMappingPanel() {
   );
   const [rawRows, setRawRows] = useState([]);
   const [clientId, setClientId] = useState('');
+  const [multiIds, setMultiIds] = useState([]);
+  const [multiOpen, setMultiOpen] = useState(false);
+  const multiDropRef = useRef(null);
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState(() => new Set());
   const [bulkTarget, setBulkTarget] = useState('');
@@ -53,6 +127,15 @@ export default function SourceMappingPanel() {
   const [error, setError] = useState(null);
   const [warning, setWarning] = useState(null);
   const [status, setStatus] = useState(null);
+
+  const setMapMode = (next) => {
+    setMapModeState(next);
+    try {
+      window.sessionStorage.setItem(MODE_KEY, next);
+    } catch {
+      /* ignore */
+    }
+  };
 
   const dealerOptions = useMemo(
     () =>
@@ -75,6 +158,34 @@ export default function SourceMappingPanel() {
     if (dealerOptions[0]?.id) setClientId(dealerOptions[0].id);
   }, [clientId, client, dealerOptions]);
 
+  useEffect(() => {
+    if (multiIds.length || !dealerOptions.length) return;
+    const fromClient = String(client?.ga4CustomerId || '').trim();
+    const starter = fromClient || dealerOptions[0]?.id;
+    if (starter) setMultiIds([starter]);
+  }, [multiIds.length, dealerOptions, client]);
+
+  useEffect(() => {
+    if (mapMode !== 'multi') setMultiOpen(false);
+  }, [mapMode]);
+
+  useEffect(() => {
+    if (!multiOpen) return undefined;
+    const onPointer = (e) => {
+      if (multiDropRef.current?.contains(e.target)) return;
+      setMultiOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') setMultiOpen(false);
+    };
+    document.addEventListener('mousedown', onPointer);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onPointer);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [multiOpen]);
+
   const loadConfig = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -94,35 +205,31 @@ export default function SourceMappingPanel() {
     }
   }, []);
 
+  const previewClientIds = useMemo(() => {
+    if (mapMode === 'all') return dealerOptions.map((d) => d.id);
+    if (mapMode === 'multi') return multiIds.filter(Boolean);
+    return clientId ? [clientId] : [];
+  }, [mapMode, dealerOptions, multiIds, clientId]);
+
   const loadRaw = useCallback(async () => {
-    if (!clientId || !MTD.curFrom || !MTD.curTo) {
+    if (!previewClientIds.length || !MTD.curFrom || !MTD.curTo) {
       setRawRows([]);
       return;
     }
     setRawLoading(true);
     try {
-      const qs = new URLSearchParams({
-        clientId,
-        from: MTD.curFrom,
-        to: MTD.curTo,
-      });
-      const res = await fetch(`/api/dashboard/source-mapping/raw?${qs}`, {
-        credentials: 'same-origin',
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(json.error || 'Failed to load raw sources');
-        setRawRows([]);
-        return;
-      }
-      setRawRows(json.rows || []);
+      const lists = await Promise.all(
+        previewClientIds.map((id) => fetchRawForClient(id))
+      );
+      setRawRows(mergeRawLists(lists));
       setError(null);
     } catch (err) {
       setError(err.message || 'Failed to load raw sources');
+      setRawRows([]);
     } finally {
       setRawLoading(false);
     }
-  }, [clientId]);
+  }, [previewClientIds]);
 
   useEffect(() => {
     loadConfig();
@@ -174,6 +281,33 @@ export default function SourceMappingPanel() {
     return Object.fromEntries(previewRows.map((r) => [r.id, r.pageViews]));
   }, [previewRows]);
 
+  const modeMeta = MAP_MODES.find((m) => m.id === mapMode) || MAP_MODES[2];
+
+  const previewScopeLabel = useMemo(() => {
+    if (mapMode === 'all') return `All dealers (${dealerOptions.length})`;
+    if (mapMode === 'multi') return `${multiIds.length} dealer${multiIds.length === 1 ? '' : 's'} selected`;
+    const name = dealerOptions.find((d) => d.id === clientId)?.name;
+    return name || 'One dealer';
+  }, [mapMode, dealerOptions, multiIds, clientId]);
+
+  const multiTriggerLabel = useMemo(() => {
+    if (!multiIds.length) return 'Select dealers…';
+    if (multiIds.length === 1) {
+      return (
+        dealerOptions.find((d) => d.id === multiIds[0])?.name || '1 dealer'
+      );
+    }
+    if (multiIds.length === dealerOptions.length && dealerOptions.length > 0) {
+      return `All dealers (${multiIds.length})`;
+    }
+    return `${multiIds.length} dealers selected`;
+  }, [multiIds, dealerOptions]);
+
+  const toggleMultiId = (id) => {
+    setMultiIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
   const persist = async (nextChannels, nextMapping, { reset = false } = {}) => {
     setSaving(true);
     setStatus(null);
@@ -334,9 +468,31 @@ export default function SourceMappingPanel() {
         detail={
           saving
             ? 'Updating channel rules for Traffic and All Dealers'
-            : 'Fetching source / medium rows for preview dealer'
+            : `Fetching source / medium rows · ${previewScopeLabel}`
         }
       />
+      <div className="src-map-card">
+        <h3 className="src-map-h3">Mapping scope</h3>
+        <div className="src-map-mode" role="tablist" aria-label="Mapping scope">
+          {MAP_MODES.map((m) => (
+            <button
+              key={m.id}
+              type="button"
+              role="tab"
+              aria-selected={mapMode === m.id}
+              className={`src-map-mode-btn${mapMode === m.id ? ' is-active' : ''}`}
+              onClick={() => setMapMode(m.id)}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+        <p className="src-map-sub" style={{ marginBottom: 0, marginTop: 10 }}>
+          {modeMeta.blurb} Channel rules are still shared and apply on Traffic and All
+          Dealers after save. Preview below: <strong>{previewScopeLabel}</strong>.
+        </p>
+      </div>
+
       <div className="src-map-card">
         <h3 className="src-map-h3">How this works</h3>
         <p className="src-map-sub" style={{ marginBottom: 0 }}>
@@ -344,8 +500,7 @@ export default function SourceMappingPanel() {
           <code>google / organic</code>, <code>facebook / paid</code>, and so on.
           Map each raw source into a clean channel (the column names used on Traffic
           and All Dealers). Renaming, merging, or reassigning here updates those
-          pages after save. Mapping is shared across all dealers; view counts below
-          are for the dealer selected for preview.
+          pages after save.
         </p>
       </div>
 
@@ -358,22 +513,86 @@ export default function SourceMappingPanel() {
       )}
 
       <div className="src-map-toolbar">
-        <label>
-          Preview dealer
-          <select
-            value={clientId}
-            onChange={(e) => setClientId(e.target.value)}
-            className="src-map-select"
-            disabled={dealersLoading || !dealerOptions.length}
-          >
-            {!dealerOptions.length && <option value="">No dealers</option>}
-            {dealerOptions.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.name}
-              </option>
-            ))}
-          </select>
-        </label>
+        {mapMode === 'single' && (
+          <label>
+            Preview dealer
+            <select
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+              className="src-map-select"
+              disabled={dealersLoading || !dealerOptions.length}
+            >
+              {!dealerOptions.length && <option value="">No dealers</option>}
+              {dealerOptions.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {mapMode === 'multi' && (
+          <div className="src-map-multi" ref={multiDropRef}>
+            <div className="src-map-multi-label">Preview dealers</div>
+            <button
+              type="button"
+              className={`src-map-multi-trigger${multiOpen ? ' is-open' : ''}`}
+              aria-haspopup="listbox"
+              aria-expanded={multiOpen}
+              onClick={() => setMultiOpen((o) => !o)}
+            >
+              <span className="src-map-multi-trigger-text">{multiTriggerLabel}</span>
+              <span className="src-map-multi-trigger-arr" aria-hidden>
+                {multiOpen ? '▴' : '▾'}
+              </span>
+            </button>
+            {multiOpen && (
+              <div className="src-map-multi-pop" role="listbox" aria-label="Preview dealers" aria-multiselectable="true">
+                <div className="src-map-multi-actions">
+                  <button
+                    type="button"
+                    className="src-map-linkish"
+                    onClick={() => setMultiIds(dealerOptions.map((d) => d.id))}
+                  >
+                    Select all
+                  </button>
+                  <button
+                    type="button"
+                    className="src-map-linkish"
+                    onClick={() => setMultiIds([])}
+                  >
+                    Clear
+                  </button>
+                  <span className="src-map-meta" style={{ paddingBottom: 0, marginLeft: 'auto' }}>
+                    {multiIds.length} selected
+                  </span>
+                </div>
+                <ul className="src-map-multi-list">
+                  {dealerOptions.map((d) => {
+                    const checked = multiIds.includes(d.id);
+                    return (
+                      <li key={d.id}>
+                        <label className="src-map-multi-item">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleMultiId(d.id)}
+                          />
+                          <span>{d.name}</span>
+                        </label>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+        {mapMode === 'all' && (
+          <span className="src-map-meta">
+            Previewing combined MTD traffic for all {dealerOptions.length} dealers
+          </span>
+        )}
         <span className="src-map-meta">
           MTD {MTD.curLabel}
           {rawLoading ? ' · Loading raw…' : ''}
@@ -388,71 +607,68 @@ export default function SourceMappingPanel() {
             Rename, merge, or delete. &quot;Unmapped&quot; catches anything not yet
             assigned.
           </p>
-          <div className="src-map-table-wrap">
-            <table className="src-map-table">
-              <thead>
-                <tr>
-                  <th>Channel</th>
-                  <th className="right">Raw Sources</th>
-                  <th className="right">Page Views (MTD)</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {channels.map((ch) => (
-                  <tr key={ch.id}>
-                    <td>
-                      <span
-                        className="src-map-swatch"
-                        style={{ background: ch.color }}
-                      />
-                      <input
-                        type="text"
-                        className="src-map-rename"
-                        defaultValue={ch.name}
-                        key={`${ch.id}-${ch.name}`}
-                        onBlur={(e) => {
-                          const v = e.target.value.trim();
-                          if (v && v !== ch.name) renameChannel(ch.id, v);
-                        }}
-                      />
-                    </td>
-                    <td className="right src-map-num">{channelCounts[ch.id] || 0}</td>
-                    <td className="right src-map-num">{fmt(pvByChannel[ch.id] || 0)}</td>
-                    <td className="right src-map-actions">
-                      <select
-                        className="src-map-select src-map-select--sm"
-                        defaultValue=""
-                        onChange={(e) => {
-                          if (e.target.value) {
-                            mergeChannel(ch.id, e.target.value);
-                            e.target.value = '';
-                          }
-                        }}
-                      >
-                        <option value="">Merge into…</option>
-                        {channels
-                          .filter((c) => c.id !== ch.id)
-                          .map((o) => (
-                            <option key={o.id} value={o.id}>
-                              {o.name}
-                            </option>
-                          ))}
-                      </select>
-                      {ch.id !== UNMAPPED_ID && (
-                        <button
-                          type="button"
-                          className="src-map-btn src-map-btn--danger"
-                          onClick={() => deleteChannel(ch.id)}
-                        >
-                          Delete
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="src-map-channel-list">
+            <div className="src-map-channel-head" aria-hidden>
+              <span>Channel</span>
+              <span className="right">Raw Sources</span>
+              <span className="right">Page Views (MTD)</span>
+              <span className="right">Actions</span>
+            </div>
+            {channels.map((ch) => (
+              <div className="src-map-channel-row" key={ch.id}>
+                <div className="src-map-channel-cell">
+                  <span
+                    className="src-map-swatch"
+                    style={{ background: ch.color }}
+                  />
+                  <input
+                    type="text"
+                    className="src-map-rename"
+                    defaultValue={ch.name}
+                    key={`${ch.id}-${ch.name}`}
+                    onBlur={(e) => {
+                      const v = e.target.value.trim();
+                      if (v && v !== ch.name) renameChannel(ch.id, v);
+                    }}
+                  />
+                </div>
+                <div className="src-map-num right">{channelCounts[ch.id] || 0}</div>
+                <div className="src-map-num right">{fmt(pvByChannel[ch.id] || 0)}</div>
+                <div className="src-map-actions">
+                  <select
+                    className="src-map-select src-map-select--sm"
+                    defaultValue=""
+                    aria-label={`Merge ${ch.name} into`}
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        mergeChannel(ch.id, e.target.value);
+                        e.target.value = '';
+                      }
+                    }}
+                  >
+                    <option value="">Merge into…</option>
+                    {channels
+                      .filter((c) => c.id !== ch.id)
+                      .map((o) => (
+                        <option key={o.id} value={o.id}>
+                          {o.name}
+                        </option>
+                      ))}
+                  </select>
+                  {ch.id !== UNMAPPED_ID ? (
+                    <button
+                      type="button"
+                      className="src-map-btn src-map-btn--danger"
+                      onClick={() => deleteChannel(ch.id)}
+                    >
+                      Delete
+                    </button>
+                  ) : (
+                    <span className="src-map-btn-spacer" aria-hidden />
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
           <div className="src-map-btn-row">
             <button type="button" className="src-map-btn" onClick={addChannel}>
@@ -467,7 +683,8 @@ export default function SourceMappingPanel() {
         <div className="src-map-card src-map-card--panel">
           <h3 className="src-map-h3">Live Preview — Channel Totals</h3>
           <p className="src-map-sub">
-            Month-to-date, selected dealer. This is what the Traffic tab will show.
+            Month-to-date · {previewScopeLabel}. This is what the Traffic tab will show
+            for the selected scope.
           </p>
           <div className="src-map-table-wrap">
             <table className="src-map-table">
@@ -493,11 +710,13 @@ export default function SourceMappingPanel() {
                     return (
                       <tr key={r.id}>
                         <td>
-                          <span
-                            className="src-map-swatch"
-                            style={{ background: r.color }}
-                          />
-                          {r.name}
+                          <div className="src-map-channel-cell">
+                            <span
+                              className="src-map-swatch"
+                              style={{ background: r.color }}
+                            />
+                            <span className="src-map-channel-name">{r.name}</span>
+                          </div>
                         </td>
                         <td className="right src-map-num">{fmt(r.pageViews)}</td>
                         <td className="right src-map-num">{fmt(r.vdpViews)}</td>

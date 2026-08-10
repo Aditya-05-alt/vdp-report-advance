@@ -8,8 +8,10 @@ import {
 export const VDP_DEFAULT_DATE_RANGE = 'current_month';
 
 /**
- * Resolve primary report period (+ optional compare window).
- * When compareEnabled and no custom compare range → prior-month-aligned.
+ * Resolve primary report period (+ compare / MoM prior window).
+ * priorFrom/priorTo are always filled (prior-month-aligned by default) so
+ * Traffic / Inventory MoM still works when Overview Compare is off.
+ * Custom compareDateRange applies only when compareEnabled.
  */
 export function resolveVdpReportPeriod(
   pickerValue,
@@ -25,18 +27,17 @@ export function resolveVdpReportPeriod(
   let priorFrom = null;
   let priorTo = null;
 
-  if (compareEnabled) {
-    const custom = compareDateRange
+  const custom =
+    compareEnabled && compareDateRange
       ? resolveRangePickerValue(compareDateRange)
       : null;
-    if (custom?.start && custom?.end) {
-      priorFrom = custom.start;
-      priorTo = custom.end;
-    } else {
-      const aligned = previousMonthAlignedRange(from, to);
-      priorFrom = aligned.compareFrom;
-      priorTo = aligned.compareTo;
-    }
+  if (custom?.start && custom?.end) {
+    priorFrom = custom.start;
+    priorTo = custom.end;
+  } else {
+    const aligned = previousMonthAlignedRange(from, to);
+    priorFrom = aligned.compareFrom;
+    priorTo = aligned.compareTo;
   }
 
   return {

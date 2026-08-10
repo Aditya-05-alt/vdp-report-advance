@@ -3,6 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useClient } from '@/components/dashboard/ClientContext';
 import { fetchTrafficBySource } from '@/lib/api/trafficBySource';
+import {
+  formatRangeLabel,
+  previousMonthAlignedRange,
+} from '@/lib/overview/comparePeriod';
 import { fmt, pct, momClass } from '@/lib/vdp/aggregates';
 import { isAllDealerClient } from '@/lib/dashboard/allDealers';
 import VdpChart from './VdpChart';
@@ -21,11 +25,30 @@ export default function TrafficView() {
   const {
     from: curFrom,
     to: curTo,
-    priorFrom: priFrom,
-    priorTo: priTo,
+    priorFrom: ctxPriFrom,
+    priorTo: ctxPriTo,
     curLabel,
-    priLabel,
+    priLabel: ctxPriLabel,
   } = useVdpDateRange();
+
+  // Traffic always needs MoM prior — fall back to prior-month-aligned if context is empty
+  const { priFrom, priTo, priLabel } = useMemo(() => {
+    if (ctxPriFrom && ctxPriTo) {
+      return {
+        priFrom: ctxPriFrom,
+        priTo: ctxPriTo,
+        priLabel: ctxPriLabel || 'Prior',
+      };
+    }
+    const aligned = previousMonthAlignedRange(curFrom, curTo);
+    return {
+      priFrom: aligned.compareFrom,
+      priTo: aligned.compareTo,
+      priLabel:
+        formatRangeLabel(aligned.compareFrom, aligned.compareTo) || 'Prior',
+    };
+  }, [ctxPriFrom, ctxPriTo, ctxPriLabel, curFrom, curTo]);
+
   const [metric, setMetric] = useState('page');
   const [sort, setSort] = useState({ k: 'pv1', dir: -1 });
   const [rows, setRows] = useState([]);
@@ -38,7 +61,7 @@ export default function TrafficView() {
   const canLoad = Boolean(ga4Id) && !isAllDealerClient(client) && !isAllDealer;
 
   const load = useCallback(async () => {
-    if (!canLoad || !curFrom || !curTo) {
+    if (!canLoad || !curFrom || !curTo || !priFrom || !priTo) {
       setRows([]);
       return;
     }

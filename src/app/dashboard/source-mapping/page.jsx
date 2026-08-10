@@ -1,7 +1,6 @@
 'use client';
 
-import SourceMappingPanel from '@/components/dashboard/admin/SourceMappingPanel';
-
+/** Rendered by HomeViewsKeepAlive in VdpShell (kept mounted across home tab switches). */
 export default function SourceMappingPage() {
-  return <SourceMappingPanel />;
+  return null;
 }

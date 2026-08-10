@@ -59,7 +59,12 @@ export async function fetchTrafficBySource({
     });
     const priJson = await priRes.json().catch(() => ({}));
     if (onCancelCheck?.()) return [];
-    if (priRes.ok) priMap = rowMap(priJson.rows);
+    if (!priRes.ok) {
+      throw new Error(
+        priJson.error || `Traffic prior period failed (${priRes.status})`
+      );
+    }
+    priMap = rowMap(priJson.rows);
   }
 
   const names = [...new Set([...curMap.keys(), ...priMap.keys()])];

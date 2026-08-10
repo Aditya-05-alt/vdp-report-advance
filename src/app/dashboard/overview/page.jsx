@@ -1,7 +1,6 @@
 'use client';
 
-import OverviewView from '@/components/vdp/OverviewView';
-
+/** Rendered by DealerViewsKeepAlive in VdpShell (kept mounted across tab switches). */
 export default function DealerOverviewPage() {
-  return <OverviewView />;
+  return null;
 }

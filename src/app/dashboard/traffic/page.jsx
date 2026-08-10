@@ -1,7 +1,6 @@
 'use client';
 
-import TrafficView from '@/components/vdp/TrafficView';
-
+/** Rendered by DealerViewsKeepAlive in VdpShell (kept mounted across tab switches). */
 export default function TrafficPage() {
-  return <TrafficView />;
+  return null;
 }

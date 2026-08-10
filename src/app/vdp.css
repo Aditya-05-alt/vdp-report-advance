@@ -278,6 +278,16 @@
   max-width: 1360px;
   margin: 0 auto;
 }
+.vdp-dealer-keep-alive,
+.vdp-home-keep-alive {
+  position: relative;
+}
+.vdp-tab-pane {
+  display: none;
+}
+.vdp-tab-pane.is-active {
+  display: block;
+}
 .vdp-dealer-context {
   font-size: 13px;
   color: var(--vdp-muted);

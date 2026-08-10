@@ -49,6 +49,35 @@ function fmt(n) {
   return Math.round(Number(n) || 0).toLocaleString();
 }
 
+/** Pretty-print GA4 default channel group (organic_search → Organic Search). */
+function formatRawChannel(raw) {
+  const s = String(raw || '').trim();
+  if (!s || s === '(not set)') return '(not set)';
+  const known = {
+    organic_search: 'Organic Search',
+    paid_search: 'Paid Search',
+    direct: 'Direct',
+    organic_social: 'Organic Social',
+    paid_social: 'Paid Social',
+    paid_video: 'Paid Video',
+    organic_video: 'Organic Video',
+    display: 'Display',
+    email: 'Email',
+    referral: 'Referral',
+    affiliates: 'Affiliates',
+    paid_other: 'Paid Other',
+    sms: 'SMS',
+    audio: 'Audio',
+    'cross-network': 'Cross-network',
+    unassigned: 'Unassigned',
+  };
+  const key = s.toLowerCase();
+  if (known[key]) return known[key];
+  return s
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 function rulesFromMappingObj(mapping) {
   return Object.entries(mapping || {}).map(([key, channelId]) => {
     const [rawSource, rawMedium] = String(key).split('|||');
@@ -71,12 +100,19 @@ function mergeRawLists(lists) {
           id: key,
           rawSource: r.rawSource,
           rawMedium: r.rawMedium,
+          rawChannel: r.rawChannel || '(not set)',
           pageViews: Number(r.pageViews) || 0,
           vdpViews: Number(r.vdpViews) || 0,
         });
       } else {
         prev.pageViews += Number(r.pageViews) || 0;
         prev.vdpViews += Number(r.vdpViews) || 0;
+        if (
+          (!prev.rawChannel || prev.rawChannel === '(not set)') &&
+          r.rawChannel
+        ) {
+          prev.rawChannel = r.rawChannel;
+        }
       }
     }
   }
@@ -119,6 +155,9 @@ export default function SourceMappingPanel() {
   const [multiOpen, setMultiOpen] = useState(false);
   const multiDropRef = useRef(null);
   const [search, setSearch] = useState('');
+  const [filterSource, setFilterSource] = useState('');
+  const [filterMedium, setFilterMedium] = useState('');
+  const [filterChannel, setFilterChannel] = useState('');
   const [selected, setSelected] = useState(() => new Set());
   const [bulkTarget, setBulkTarget] = useState('');
   const [loading, setLoading] = useState(true);
@@ -251,16 +290,43 @@ export default function SourceMappingPanel() {
     let rows = rawRows.map((r) => ({
       ...r,
       channelId: mappingMap.get(rawPairKey(r.rawSource, r.rawMedium)) || UNMAPPED_ID,
+      rawChannelLabel: formatRawChannel(r.rawChannel),
     }));
+    if (filterSource) {
+      rows = rows.filter((r) => String(r.rawSource) === filterSource);
+    }
+    if (filterMedium) {
+      rows = rows.filter((r) => String(r.rawMedium) === filterMedium);
+    }
+    if (filterChannel) {
+      rows = rows.filter((r) => formatRawChannel(r.rawChannel) === filterChannel);
+    }
     if (q) {
       rows = rows.filter(
         (r) =>
           String(r.rawSource).toLowerCase().includes(q) ||
-          String(r.rawMedium).toLowerCase().includes(q)
+          String(r.rawMedium).toLowerCase().includes(q) ||
+          String(r.rawChannel || '').toLowerCase().includes(q) ||
+          r.rawChannelLabel.toLowerCase().includes(q)
       );
     }
     return rows;
-  }, [rawRows, mappingMap, search]);
+  }, [rawRows, mappingMap, search, filterSource, filterMedium, filterChannel]);
+
+  const sourceFilterOpts = useMemo(() => {
+    const set = new Set(rawRows.map((r) => String(r.rawSource || '')));
+    return [...set].filter(Boolean).sort((a, b) => a.localeCompare(b));
+  }, [rawRows]);
+
+  const mediumFilterOpts = useMemo(() => {
+    const set = new Set(rawRows.map((r) => String(r.rawMedium || '')));
+    return [...set].filter(Boolean).sort((a, b) => a.localeCompare(b));
+  }, [rawRows]);
+
+  const channelFilterOpts = useMemo(() => {
+    const set = new Set(rawRows.map((r) => formatRawChannel(r.rawChannel)));
+    return [...set].filter(Boolean).sort((a, b) => a.localeCompare(b));
+  }, [rawRows]);
 
   const channelCounts = useMemo(() => {
     const counts = Object.fromEntries(channels.map((c) => [c.id, 0]));
@@ -736,7 +802,10 @@ export default function SourceMappingPanel() {
           Raw Sources{' '}
           <span className="src-map-count">
             ({filteredRaw.length}
-            {search ? ` of ${rawRows.length}` : ''})
+            {search || filterSource || filterMedium || filterChannel
+              ? ` of ${rawRows.length}`
+              : ''}
+            )
           </span>
         </h3>
         <p className="src-map-sub">
@@ -744,16 +813,67 @@ export default function SourceMappingPanel() {
           dropdown.
         </p>
         <div className="src-map-toolbar" style={{ marginBottom: 10 }}>
-          <label>
-            Search
-            <input
-              type="text"
-              className="src-map-search"
-              placeholder="source, medium..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </label>
+          <input
+            type="text"
+            className="src-map-search"
+            placeholder="Search…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            aria-label="Search raw sources"
+          />
+          <select
+            className="src-map-select src-map-select--filter"
+            value={filterChannel}
+            onChange={(e) => setFilterChannel(e.target.value)}
+            aria-label="Filter by channel"
+          >
+            <option value="">By Channel</option>
+            {channelFilterOpts.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+          <select
+            className="src-map-select src-map-select--filter"
+            value={filterSource}
+            onChange={(e) => setFilterSource(e.target.value)}
+            aria-label="Filter by source"
+          >
+            <option value="">By Source</option>
+            {sourceFilterOpts.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+          <select
+            className="src-map-select src-map-select--filter"
+            value={filterMedium}
+            onChange={(e) => setFilterMedium(e.target.value)}
+            aria-label="Filter by medium"
+          >
+            <option value="">By Medium</option>
+            {mediumFilterOpts.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+          {(filterSource || filterMedium || filterChannel || search) && (
+            <button
+              type="button"
+              className="src-map-btn"
+              onClick={() => {
+                setSearch('');
+                setFilterSource('');
+                setFilterMedium('');
+                setFilterChannel('');
+              }}
+            >
+              Clear filters
+            </button>
+          )}
           {selected.size > 0 && (
             <div className="src-map-bulk">
               <span>{selected.size} selected</span>
@@ -783,10 +903,10 @@ export default function SourceMappingPanel() {
           )}
         </div>
         <div className="src-map-table-wrap src-map-table-wrap--raw">
-          <table className="src-map-table">
+          <table className="src-map-table src-map-table--raw">
             <thead>
               <tr>
-                <th style={{ width: 36 }}>
+                <th className="src-map-th-check">
                   <input
                     type="checkbox"
                     checked={
@@ -796,6 +916,7 @@ export default function SourceMappingPanel() {
                     onChange={(e) => selectAllVisible(e.target.checked)}
                   />
                 </th>
+                <th>Raw Channel</th>
                 <th>Raw Source</th>
                 <th>Raw Medium</th>
                 <th className="right">Page Views (MTD)</th>
@@ -806,7 +927,7 @@ export default function SourceMappingPanel() {
             <tbody>
               {filteredRaw.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="src-map-empty">
+                  <td colSpan={7} className="src-map-empty">
                     {rawLoading
                       ? 'Loading…'
                       : 'No raw sources for this dealer / period. Deploy source_mapping.sql if the RPC is missing.'}
@@ -815,20 +936,21 @@ export default function SourceMappingPanel() {
               ) : (
                 filteredRaw.map((r) => (
                   <tr key={r.id}>
-                    <td>
+                    <td className="src-map-td-check">
                       <input
                         type="checkbox"
                         checked={selected.has(r.id)}
                         onChange={() => toggleSelect(r.id)}
                       />
                     </td>
+                    <td>{formatRawChannel(r.rawChannel)}</td>
                     <td>{r.rawSource}</td>
                     <td>{r.rawMedium}</td>
                     <td className="right src-map-num">{fmt(r.pageViews)}</td>
                     <td className="right src-map-num">{fmt(r.vdpViews)}</td>
                     <td>
                       <select
-                        className="src-map-select"
+                        className="src-map-select src-map-select--map"
                         value={r.channelId}
                         onChange={(e) =>
                           assignOne(r.rawSource, r.rawMedium, e.target.value)

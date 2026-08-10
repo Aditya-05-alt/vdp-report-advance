@@ -48,6 +48,7 @@ export async function GET(request) {
     id: `${String(r.raw_source || '').toLowerCase()}|||${String(r.raw_medium || '').toLowerCase()}`,
     rawSource: r.raw_source,
     rawMedium: r.raw_medium,
+    rawChannel: r.raw_channel || r.channel || '(not set)',
     pageViews: Number(r.page_views) || 0,
     vdpViews: Number(r.vdp_views) || 0,
   }));

@@ -6602,7 +6602,7 @@ body {
   background: var(--sm-bg);
   border: 1px solid var(--sm-border);
   border-radius: 12px;
-  padding: 14px 16px;
+  padding: 16px;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 .src-map-card--panel {
@@ -6646,8 +6646,8 @@ body {
 .src-map-toolbar {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 10px 14px;
+  align-items: center;
+  gap: 10px 12px;
   margin: 0;
 }
 .src-map-mode {
@@ -6914,7 +6914,11 @@ body {
   background: var(--sm-bg-soft);
   flex: 1 1 auto;
 }
-.src-map-search { min-width: 200px; height: 32px; line-height: 30px; }
+.src-map-search { min-width: 160px; height: 32px; line-height: 30px; }
+.src-map-select--filter {
+  min-width: 140px;
+  max-width: 200px;
+}
 .src-map-table-wrap {
   overflow: auto;
   border: 1px solid var(--sm-border);
@@ -6930,7 +6934,9 @@ body {
 }
 .src-map-table-wrap--raw {
   flex: none;
-  max-height: 360px;
+  max-height: 420px;
+  width: 100%;
+  margin: 0;
 }
 .src-map-table {
   width: 100%;
@@ -6942,6 +6948,41 @@ body {
 }
 .src-map-table--channels {
   table-layout: fixed;
+}
+.src-map-table--raw {
+  table-layout: fixed;
+  width: 100%;
+}
+.src-map-table--raw .src-map-th-check,
+.src-map-table--raw .src-map-td-check {
+  width: 44px;
+  text-align: center;
+  padding-left: 10px;
+  padding-right: 6px;
+}
+.src-map-table--raw th:nth-child(2),
+.src-map-table--raw td:nth-child(2) { width: 16%; } /* Raw Channel */
+.src-map-table--raw th:nth-child(3),
+.src-map-table--raw td:nth-child(3) { width: 16%; } /* Raw Source */
+.src-map-table--raw th:nth-child(4),
+.src-map-table--raw td:nth-child(4) { width: 14%; } /* Raw Medium */
+.src-map-table--raw th:nth-child(5),
+.src-map-table--raw td:nth-child(5) { width: 14%; } /* Page Views */
+.src-map-table--raw th:nth-child(6),
+.src-map-table--raw td:nth-child(6) { width: 14%; } /* VDP Views */
+.src-map-table--raw th:nth-child(7),
+.src-map-table--raw td:nth-child(7) { width: 18%; } /* Mapped Channel */
+.src-map-table--raw th,
+.src-map-table--raw td {
+  padding: 10px 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.src-map-table--raw .src-map-select--map {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 .src-map-table th,
 .src-map-table td {

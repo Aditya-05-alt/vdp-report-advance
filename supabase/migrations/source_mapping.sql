@@ -76,10 +76,11 @@ CREATE OR REPLACE FUNCTION public.get_raw_source_medium_traffic_advance(
   p_to        date
 )
 RETURNS TABLE (
-  raw_source text,
-  raw_medium text,
-  page_views bigint,
-  vdp_views  bigint
+  raw_source  text,
+  raw_medium  text,
+  raw_channel text,
+  page_views  bigint,
+  vdp_views   bigint
 )
 LANGUAGE sql
 STABLE
@@ -89,6 +90,13 @@ AS $$
   SELECT
     COALESCE(NULLIF(TRIM(p.source), ''), '(direct)') AS raw_source,
     COALESCE(NULLIF(TRIM(p.medium), ''), '(none)') AS raw_medium,
+    COALESCE(
+      (
+        ARRAY_AGG(NULLIF(TRIM(p.channel), '') ORDER BY COALESCE(p.views, 0) DESC)
+          FILTER (WHERE NULLIF(TRIM(p.channel), '') IS NOT NULL)
+      )[1],
+      '(not set)'
+    ) AS raw_channel,
     SUM(COALESCE(p.views, 0))::bigint AS page_views,
     SUM(
       CASE

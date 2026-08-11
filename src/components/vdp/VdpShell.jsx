@@ -15,6 +15,11 @@ import HomeViewsKeepAlive from '@/components/vdp/HomeViewsKeepAlive';
 const HOME_VIEWS = [
   { id: 'portfolio', href: '/dashboard', label: 'All Dealers' },
   { id: 'source-mapping', href: '/dashboard/source-mapping', label: 'Source Mapping' },
+  {
+    id: 'inventory-analyse',
+    href: '/dashboard/inventory-analyse',
+    label: 'Inventory Analyse',
+  },
 ];
 
 const DEALER_VIEWS = [
@@ -26,6 +31,7 @@ const DEALER_VIEWS = [
 function viewFromPath(pathname) {
   if (pathname === '/dashboard' || pathname === '/dashboard/') return 'portfolio';
   if (pathname.startsWith('/dashboard/source-mapping')) return 'source-mapping';
+  if (pathname.startsWith('/dashboard/inventory-analyse')) return 'inventory-analyse';
   if (pathname.startsWith('/dashboard/overview')) return 'overview';
   if (pathname.startsWith('/dashboard/traffic')) return 'traffic';
   if (pathname.startsWith('/dashboard/inventory')) return 'inventory';

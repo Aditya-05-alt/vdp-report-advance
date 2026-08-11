@@ -48,14 +48,12 @@ function isInternalNavClick(event) {
     if (dealerTabs.includes(next.pathname) && dealerTabs.includes(currentPath)) {
       return false;
     }
-    const homeTabs = ['/dashboard', '/dashboard/'];
-    const isHome =
-      homeTabs.includes(currentPath) || currentPath === '/dashboard';
-    const isNextHome =
-      homeTabs.includes(next.pathname) || next.pathname === '/dashboard';
-    const isSource = currentPath.startsWith('/dashboard/source-mapping');
-    const isNextSource = next.pathname.startsWith('/dashboard/source-mapping');
-    if ((isHome || isSource) && (isNextHome || isNextSource)) {
+    const isHomeTab = (path) =>
+      path === '/dashboard' ||
+      path === '/dashboard/' ||
+      path.startsWith('/dashboard/source-mapping') ||
+      path.startsWith('/dashboard/inventory-analyse');
+    if (isHomeTab(currentPath) && isHomeTab(next.pathname)) {
       return false;
     }
   } catch {

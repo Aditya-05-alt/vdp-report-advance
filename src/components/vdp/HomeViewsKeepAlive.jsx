@@ -3,17 +3,18 @@
 import { useEffect, useState } from 'react';
 import PortfolioView from './PortfolioView';
 import SourceMappingPanel from '@/components/dashboard/admin/SourceMappingPanel';
+import InventoryAnalyseView from './InventoryAnalyseView';
 
-const TAB_IDS = ['portfolio', 'source-mapping'];
+const TAB_IDS = ['portfolio', 'source-mapping', 'inventory-analyse'];
 
 /**
- * Keep All Dealers + Source Mapping mounted after first visit
- * so home tab switches are instant.
+ * Keep home tabs mounted after first visit so switches are instant.
  */
 export default function HomeViewsKeepAlive({ activeView }) {
   const [mounted, setMounted] = useState(() => ({
     portfolio: activeView === 'portfolio',
     'source-mapping': activeView === 'source-mapping',
+    'inventory-analyse': activeView === 'inventory-analyse',
   }));
 
   useEffect(() => {
@@ -47,6 +48,14 @@ export default function HomeViewsKeepAlive({ activeView }) {
           aria-hidden={activeView !== 'source-mapping'}
         >
           <SourceMappingPanel />
+        </div>
+      ) : null}
+      {mounted['inventory-analyse'] ? (
+        <div
+          className={`vdp-tab-pane${activeView === 'inventory-analyse' ? ' is-active' : ''}`}
+          aria-hidden={activeView !== 'inventory-analyse'}
+        >
+          <InventoryAnalyseView />
         </div>
       ) : null}
     </div>

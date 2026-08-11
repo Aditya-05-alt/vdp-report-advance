@@ -42,9 +42,10 @@ export function reportKeyFromPathname(pathname) {
     return 'overview';
   }
   if (pathname?.startsWith('/dashboard/traffic')) return 'traffic';
-  if (pathname?.startsWith('/dashboard/inventory')) return 'inventory';
-  // Available to every logged-in user (same as HTML prototype top tab)
+  // Available to every logged-in user (same as HTML prototype top tabs)
+  if (pathname?.startsWith('/dashboard/inventory-analyse')) return null;
   if (pathname?.startsWith('/dashboard/source-mapping')) return null;
+  if (pathname?.startsWith('/dashboard/inventory')) return 'inventory';
   // Legacy routes redirect visually; treat as overview for access
   if (
     pathname?.startsWith('/dashboard/health') ||

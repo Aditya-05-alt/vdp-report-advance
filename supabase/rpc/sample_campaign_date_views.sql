@@ -1,0 +1,25 @@
+-- Optional helper: session_campaign + date-wise views for one dealer.
+-- App uses existing get_top_campaigns + build_date_wise_ga4_data;
+-- this is a simple combined query you can run in the SQL editor.
+
+-- Campaign-wise views
+-- SELECT
+--   COALESCE(NULLIF(TRIM(session_campaign), ''), '(not set)') AS session_campaign,
+--   SUM(views)::bigint AS views,
+--   SUM(sessions)::bigint AS sessions,
+--   SUM(total_users)::bigint AS total_users
+-- FROM public.smart_ga4_page_data
+-- WHERE client_id = 'YOUR_GA4_CLIENT_ID'
+--   AND report_date BETWEEN '2026-07-01' AND '2026-07-31'
+-- GROUP BY 1
+-- ORDER BY views DESC;
+
+-- Date-wise views
+-- SELECT
+--   report_date,
+--   SUM(views)::bigint AS views
+-- FROM public.smart_ga4_page_data
+-- WHERE client_id = 'YOUR_GA4_CLIENT_ID'
+--   AND report_date BETWEEN '2026-07-01' AND '2026-07-31'
+-- GROUP BY report_date
+-- ORDER BY report_date;

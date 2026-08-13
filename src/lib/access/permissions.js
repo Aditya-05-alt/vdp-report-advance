@@ -1,6 +1,7 @@
 export const REPORT_OPTIONS = [
   { key: 'overview', label: 'All Dealers / Overview', href: '/dashboard' },
   { key: 'traffic', label: 'Traffic by Source', href: '/dashboard/traffic' },
+  { key: 'campaigns', label: 'Campaign Views', href: '/dashboard/campaigns_advance' },
   { key: 'inventory', label: 'Inventory Performance', href: '/dashboard/inventory' },
 ];
 
@@ -42,6 +43,12 @@ export function reportKeyFromPathname(pathname) {
     return 'overview';
   }
   if (pathname?.startsWith('/dashboard/traffic')) return 'traffic';
+  if (
+    pathname?.startsWith('/dashboard/campaigns_advance') ||
+    pathname?.startsWith('/dashboard/campaigns')
+  ) {
+    return 'campaigns';
+  }
   // Available to every logged-in user (same as HTML prototype top tabs)
   if (pathname?.startsWith('/dashboard/inventory-analyse')) return null;
   if (pathname?.startsWith('/dashboard/source-mapping')) return null;

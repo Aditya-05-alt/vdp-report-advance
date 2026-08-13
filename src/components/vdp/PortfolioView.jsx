@@ -373,7 +373,7 @@ export default function PortfolioView() {
     return rows;
   }, [pageCur, pagePri, vdpCur, vdpPri, channelId, sort]);
 
-  const barData = useMemo(() => {
+  const lineData = useMemo(() => {
     const ordered = [...filteredDealerRows]
       .filter((r) => !r.error)
       .sort((a, b) => b.total - a.total);
@@ -385,9 +385,15 @@ export default function PortfolioView() {
       {
         label: curLabel,
         data: ordered.map((r) => r.total),
-        backgroundColor: '#2563eb',
-        borderRadius: 4,
-        maxBarThickness: 42,
+        borderColor: '#2563eb',
+        backgroundColor: 'rgba(37,99,235,.08)',
+        fill: !compareActive,
+        tension: 0.3,
+        pointRadius: 3,
+        pointHoverRadius: 5,
+        pointBackgroundColor: '#2563eb',
+        pointBorderColor: '#2563eb',
+        borderWidth: 2.5,
       },
     ];
 
@@ -397,9 +403,16 @@ export default function PortfolioView() {
         data: ordered.map((r) =>
           totalForRow(priorMap.get(dealerKey(r.dealer)), channelId)
         ),
-        backgroundColor: '#94a3b8',
-        borderRadius: 4,
-        maxBarThickness: 42,
+        borderColor: '#94a3b8',
+        backgroundColor: 'transparent',
+        borderDash: [5, 4],
+        fill: false,
+        tension: 0.3,
+        pointRadius: 2,
+        pointHoverRadius: 4,
+        pointBackgroundColor: '#94a3b8',
+        pointBorderColor: '#94a3b8',
+        borderWidth: 2,
       });
     }
 
@@ -418,7 +431,7 @@ export default function PortfolioView() {
     channelId,
   ]);
 
-  const barOptions = useMemo(
+  const lineOptions = useMemo(
     () => ({
       plugins: {
         legend: {
@@ -453,9 +466,9 @@ export default function PortfolioView() {
     []
   );
 
-  const barChartWidth = Math.max(
+  const lineChartWidth = Math.max(
     720,
-    (barData.labels?.length || 0) * (compareActive ? 72 : 56)
+    (lineData.labels?.length || 0) * (compareActive ? 72 : 56)
   );
 
   const openDealer = (dealer) => {
@@ -600,7 +613,7 @@ export default function PortfolioView() {
         }
         style={{ marginBottom: 16 }}
       >
-        {!(barData.labels || []).length ? (
+        {!(lineData.labels || []).length ? (
           <div style={{ color: 'var(--vdp-muted)', fontSize: 13, padding: 12 }}>
             No dealer data for this period.
           </div>
@@ -608,12 +621,12 @@ export default function PortfolioView() {
           <div className="vdp-chart-scroll">
             <div
               className="vdp-chart-scroll-inner"
-              style={{ width: barChartWidth, minWidth: '100%' }}
+              style={{ width: lineChartWidth, minWidth: '100%' }}
             >
               <VdpChart
-                type="bar"
-                data={barData}
-                options={barOptions}
+                type="line"
+                data={lineData}
+                options={lineOptions}
                 fill
                 height={280}
               />

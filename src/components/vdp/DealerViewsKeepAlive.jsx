@@ -3,19 +3,21 @@
 import { useEffect, useState } from 'react';
 import OverviewView from './OverviewView';
 import TrafficView from './TrafficView';
+import CampaignsView from './CampaignsView';
 import InventoryView from './InventoryView';
 
-const TAB_IDS = ['overview', 'traffic', 'inventory'];
+const TAB_IDS = ['overview', 'traffic', 'campaigns', 'inventory'];
 
 /**
- * Keep dealer Overview / Traffic / Inventory mounted after first visit
- * so tab switches are instant (no remount + refetch).
+ * Keep dealer Overview / Traffic / Campaign Views / Inventory mounted after
+ * first visit so tab switches are instant (no remount + refetch).
  * Remounts when clientKey (dealer) changes.
  */
 function DealerViewsKeepAliveInner({ activeView }) {
   const [mounted, setMounted] = useState(() => ({
     overview: activeView === 'overview',
     traffic: activeView === 'traffic',
+    campaigns: activeView === 'campaigns',
     inventory: activeView === 'inventory',
   }));
 
@@ -51,6 +53,14 @@ function DealerViewsKeepAliveInner({ activeView }) {
           aria-hidden={activeView !== 'traffic'}
         >
           <TrafficView />
+        </div>
+      ) : null}
+      {mounted.campaigns ? (
+        <div
+          className={`vdp-tab-pane${activeView === 'campaigns' ? ' is-active' : ''}`}
+          aria-hidden={activeView !== 'campaigns'}
+        >
+          <CampaignsView />
         </div>
       ) : null}
       {mounted.inventory ? (

@@ -25,6 +25,7 @@ const HOME_VIEWS = [
 const DEALER_VIEWS = [
   { id: 'overview', href: '/dashboard/overview', label: 'Overview' },
   { id: 'traffic', href: '/dashboard/traffic', label: 'Traffic by Source' },
+  { id: 'campaigns', href: '/dashboard/campaigns_advance', label: 'Campaign Views' },
   { id: 'inventory', href: '/dashboard/inventory', label: 'Inventory Performance' },
 ];
 
@@ -34,6 +35,12 @@ function viewFromPath(pathname) {
   if (pathname.startsWith('/dashboard/inventory-analyse')) return 'inventory-analyse';
   if (pathname.startsWith('/dashboard/overview')) return 'overview';
   if (pathname.startsWith('/dashboard/traffic')) return 'traffic';
+  if (
+    pathname.startsWith('/dashboard/campaigns_advance') ||
+    pathname.startsWith('/dashboard/campaigns')
+  ) {
+    return 'campaigns';
+  }
   if (pathname.startsWith('/dashboard/inventory')) return 'inventory';
   return 'portfolio';
 }

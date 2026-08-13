@@ -3,16 +3,28 @@ import { NextResponse } from 'next/server';
 
 export const maxDuration = 60;
 
+function trimStr(v) {
+  return String(v ?? '').trim();
+}
+
+/** Display VIN: real VIN, else stock number — never blank when stock exists. */
+function displayVin(row) {
+  return trimStr(row.inv_vin) || trimStr(row.inv_stock_number) || null;
+}
+
 function needsVinEnrichment(rows) {
   if (!rows?.length) return false;
   const hasVinKey = Object.prototype.hasOwnProperty.call(rows[0], 'inv_vin');
   if (!hasVinKey) return true;
-  return !rows.some((r) => r.inv_vin && String(r.inv_vin).trim());
+  // Enrich when any row is missing VIN but has a stock number we can look up
+  return rows.some(
+    (r) => !trimStr(r.inv_vin) && trimStr(r.inv_stock_number)
+  );
 }
 
 async function lookupVinByStock(supabase, clientId, stockNumbers) {
   const vinByStock = new Map();
-  const unique = [...new Set(stockNumbers.filter(Boolean))];
+  const unique = [...new Set(stockNumbers.map(trimStr).filter(Boolean))];
   const chunkSize = 100;
 
   for (let i = 0; i < unique.length; i += chunkSize) {
@@ -31,8 +43,8 @@ async function lookupVinByStock(supabase, clientId, stockNumbers) {
     }
 
     for (const row of data || []) {
-      const stock = String(row.inv_stock_number || '').trim();
-      const vin = String(row.inv_vin || '').trim();
+      const stock = trimStr(row.inv_stock_number);
+      const vin = trimStr(row.inv_vin);
       if (stock && vin && !vinByStock.has(stock)) {
         vinByStock.set(stock, vin);
       }
@@ -40,6 +52,25 @@ async function lookupVinByStock(supabase, clientId, stockNumbers) {
   }
 
   return vinByStock;
+}
+
+function normalizeOutputRow(r) {
+  const stock = trimStr(r.inv_stock_number) || null;
+  const vin = displayVin({
+    inv_vin: r.inv_vin,
+    inv_stock_number: stock,
+  });
+  return {
+    inv_vin: vin,
+    inv_stock_number: stock,
+    inv_make: r.inv_make,
+    inv_model: r.inv_model,
+    inv_year: r.inv_year,
+    inv_condition: r.inv_condition,
+    inv_category: r.inv_category,
+    views: r.views,
+    unique_views: r.unique_views,
+  };
 }
 
 /** Inventory performance vehicles — get_inventory_performance_advance (+ VIN enrich). */
@@ -90,7 +121,7 @@ export async function GET(request) {
 
   let rows = data ?? [];
 
-  // Deployed RPC may still return inv_stock_number only — VIN is on smart_final_data.
+  // Older deployed RPC may omit stock / leave VIN null — enrich + always coalesce.
   if (needsVinEnrichment(rows)) {
     const vinByStock = await lookupVinByStock(
       supabase,
@@ -98,24 +129,18 @@ export async function GET(request) {
       rows.map((r) => r.inv_stock_number)
     );
     rows = rows.map((r) => {
-      const stock = String(r.inv_stock_number || '').trim();
+      const stock = trimStr(r.inv_stock_number);
       const vin =
-        (r.inv_vin && String(r.inv_vin).trim()) ||
-        vinByStock.get(stock) ||
-        '';
+        trimStr(r.inv_vin) || vinByStock.get(stock) || stock || '';
       return {
+        ...r,
         inv_vin: vin || null,
         inv_stock_number: stock || null,
-        inv_make: r.inv_make,
-        inv_model: r.inv_model,
-        inv_year: r.inv_year,
-        inv_condition: r.inv_condition,
-        inv_category: r.inv_category,
-        views: r.views,
-        unique_views: r.unique_views,
       };
     });
   }
+
+  rows = rows.map(normalizeOutputRow);
 
   return NextResponse.json({ rows });
 }

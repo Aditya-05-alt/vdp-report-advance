@@ -492,7 +492,7 @@ export default function InventoryView() {
                 ) : (
                   pageRows.map((r) => (
                     <tr key={r._key}>
-                      <td className="mono">{r.vin}</td>
+                      <td className="mono">{r.vin || r.stock || '—'}</td>
                       <td>{r.make}</td>
                       <td>{r.model}</td>
                       <td>{r.year}</td>

@@ -10,6 +10,7 @@ import {
 } from 'react';
 import {
   resolveVdpReportPeriod,
+  VDP_DEFAULT_COMPARE_MODE,
   VDP_DEFAULT_DATE_RANGE,
 } from '@/lib/vdp/dateRange';
 
@@ -18,6 +19,7 @@ const VdpDateRangeContext = createContext(null);
 const STORAGE_KEY = 'vdp_report_date_range';
 const COMPARE_ENABLED_KEY = 'vdp_compare_enabled';
 const COMPARE_RANGE_KEY = 'vdp_compare_date_range';
+const COMPARE_MODE_KEY = 'vdp_compare_mode';
 
 function readJson(key, fallback) {
   if (typeof window === 'undefined') return fallback;
@@ -30,10 +32,16 @@ function readJson(key, fallback) {
   }
 }
 
+function normalizeCompareMode(value) {
+  if (value === 'pop' || value === 'mom') return value;
+  return null;
+}
+
 export function VdpDateRangeProvider({ children }) {
   const [dateRange, setDateRangeState] = useState(VDP_DEFAULT_DATE_RANGE);
   const [compareEnabled, setCompareEnabledState] = useState(true);
   const [compareDateRange, setCompareDateRangeState] = useState(null);
+  const [compareMode, setCompareModeState] = useState(VDP_DEFAULT_COMPARE_MODE);
 
   useEffect(() => {
     try {
@@ -45,6 +53,9 @@ export function VdpDateRangeProvider({ children }) {
       setCompareEnabledState(storedEnabled !== false);
       const storedCompare = readJson(COMPARE_RANGE_KEY, null);
       if (storedCompare) setCompareDateRangeState(storedCompare);
+      // Compare starts empty — user opts into MoM / PoP when needed
+      setCompareModeState(null);
+      window.sessionStorage.setItem(COMPARE_MODE_KEY, JSON.stringify(null));
     } catch {
       /* ignore */
     }
@@ -96,13 +107,37 @@ export function VdpDateRangeProvider({ children }) {
     }
   }, []);
 
+  const setCompareMode = useCallback((next) => {
+    const mode = normalizeCompareMode(next);
+    setCompareModeState(mode);
+    try {
+      window.sessionStorage.setItem(COMPARE_MODE_KEY, JSON.stringify(mode));
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const toggleCompareMode = useCallback((next) => {
+    setCompareModeState((prev) => {
+      const wanted = normalizeCompareMode(next);
+      const mode = prev === wanted ? null : wanted;
+      try {
+        window.sessionStorage.setItem(COMPARE_MODE_KEY, JSON.stringify(mode));
+      } catch {
+        /* ignore */
+      }
+      return mode;
+    });
+  }, []);
+
   const period = useMemo(
     () =>
       resolveVdpReportPeriod(dateRange, {
         compareEnabled,
         compareDateRange,
+        compareMode,
       }),
-    [dateRange, compareEnabled, compareDateRange]
+    [dateRange, compareEnabled, compareDateRange, compareMode]
   );
 
   const value = useMemo(
@@ -114,6 +149,9 @@ export function VdpDateRangeProvider({ children }) {
       toggleCompareEnabled,
       compareDateRange,
       setCompareDateRange,
+      compareMode,
+      setCompareMode,
+      toggleCompareMode,
       period,
       from: period.from,
       to: period.to,
@@ -130,6 +168,9 @@ export function VdpDateRangeProvider({ children }) {
       toggleCompareEnabled,
       compareDateRange,
       setCompareDateRange,
+      compareMode,
+      setCompareMode,
+      toggleCompareMode,
       period,
     ]
   );
@@ -146,6 +187,7 @@ export function useVdpDateRange() {
   if (!ctx) {
     const period = resolveVdpReportPeriod(VDP_DEFAULT_DATE_RANGE, {
       compareEnabled: true,
+      compareMode: VDP_DEFAULT_COMPARE_MODE,
     });
     return {
       dateRange: VDP_DEFAULT_DATE_RANGE,
@@ -155,6 +197,9 @@ export function useVdpDateRange() {
       toggleCompareEnabled: () => {},
       compareDateRange: null,
       setCompareDateRange: () => {},
+      compareMode: VDP_DEFAULT_COMPARE_MODE,
+      setCompareMode: () => {},
+      toggleCompareMode: () => {},
       period,
       from: period.from,
       to: period.to,

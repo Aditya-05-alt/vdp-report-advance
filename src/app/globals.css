@@ -6582,7 +6582,7 @@ body {
   word-break: break-word;
 }
 
-/* ── Inventory Analyse (home tab) ── */
+/* ── Inventory Analysis (home tab) ── */
 .inv-analyse {
   --ia-ink: #0f172a;
   --ia-muted: #64748b;
@@ -6590,6 +6590,7 @@ body {
   --ia-soft: #f8fafc;
   --ia-blue: #2563eb;
   --ia-gap: 16px;
+  --ia-font: inherit;
   width: 100%;
   max-width: 960px;
   margin: 0 auto;
@@ -6599,21 +6600,23 @@ body {
   flex-direction: column;
   gap: var(--ia-gap);
   color: var(--ia-ink);
+  font-family: var(--ia-font);
+  text-align: left;
 }
 .inv-analyse__hero,
 .inv-analyse__card--action {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--ia-gap) 24px;
-  align-items: center;
+  align-items: start;
   padding: 18px 20px !important;
 }
 .inv-analyse__hero {
-  background:
-    linear-gradient(135deg, #f8fbff 0%, #ffffff 52%, #f8fafc 100%) !important;
+  background: #fff !important;
 }
 .inv-analyse__col {
   min-width: 0;
+  text-align: left;
 }
 .inv-analyse__col--meta {
   display: grid;
@@ -6626,58 +6629,63 @@ body {
   gap: 10px;
   align-items: end;
 }
-.inv-analyse__eyebrow {
-  margin: 0 0 4px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--ia-blue);
-}
+/* Title: only bold headline on the page */
 .inv-analyse__title {
-  margin: 0 0 6px;
+  margin: 0 0 8px;
   font-size: 22px;
   font-weight: 700;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.02em;
   color: var(--ia-ink);
-  line-height: 1.15;
+  line-height: 1.25;
 }
+/* Section headings: medium weight, same size everywhere */
+.inv-analyse__heading,
+.inv-analyse__card h3.inv-analyse__heading {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--ia-ink);
+  line-height: 1.35;
+}
+/* Body / supporting copy: plain regular */
 .inv-analyse__sub {
   margin: 0;
   font-size: 13px;
+  font-weight: 400;
   line-height: 1.5;
   color: var(--ia-muted);
+}
+.inv-analyse__card-head {
+  text-align: left;
 }
 .inv-analyse__chip {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 3px;
+  gap: 4px;
   min-height: 64px;
   padding: 10px 12px;
   border: 1px solid var(--ia-border);
   border-radius: 10px;
-  background: #fff;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  background: var(--ia-soft);
+  text-align: left;
 }
-.inv-analyse__chip-k {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+.inv-analyse__chip-k,
+.inv-analyse__label {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
   color: var(--ia-muted);
+  line-height: 1.3;
 }
 .inv-analyse__chip-v {
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 600;
   color: var(--ia-ink);
   word-break: break-word;
-}
-.inv-analyse__grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--ia-gap);
-  align-items: stretch;
+  line-height: 1.35;
 }
 .inv-analyse__card {
   display: flex;
@@ -6686,12 +6694,7 @@ body {
   min-height: 100%;
   padding: 18px 20px !important;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
-}
-.inv-analyse__card-head .vdp-cardsub {
-  margin-bottom: 0;
-}
-.inv-analyse__card h3 {
-  margin: 0 0 4px;
+  text-align: left;
 }
 .inv-analyse__seg {
   display: grid;
@@ -6703,8 +6706,8 @@ body {
   background: var(--ia-soft);
 }
 .inv-analyse__seg-btn {
-  font-size: 12px;
-  font-weight: 650;
+  font-size: 13px;
+  font-weight: 400;
   padding: 9px 8px;
   border: 1px solid transparent;
   border-radius: 8px;
@@ -6712,6 +6715,7 @@ body {
   color: var(--ia-muted);
   cursor: pointer;
   text-align: center;
+  line-height: 1.3;
 }
 .inv-analyse__seg-btn:hover {
   color: var(--ia-ink);
@@ -6721,13 +6725,14 @@ body {
   background: #fff;
   border-color: #93c5fd;
   color: #1d4ed8;
+  font-weight: 600;
   box-shadow: 0 1px 2px rgba(37, 99, 235, 0.12);
 }
 .inv-analyse__fields {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  margin-top: auto;
+  margin-top: 0;
 }
 .inv-analyse__field {
   display: flex;
@@ -6735,18 +6740,13 @@ body {
   gap: 5px;
   position: relative;
   min-width: 0;
-}
-.inv-analyse__label {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--ia-muted);
+  text-align: left;
 }
 .inv-analyse__select,
 .inv-analyse__multi-trigger {
   font: inherit;
   font-size: 13px;
+  font-weight: 400;
   color: var(--ia-ink);
   background: #fff;
   border: 1px solid var(--ia-border);
@@ -6785,6 +6785,7 @@ body {
   border: 1px solid var(--ia-border);
   border-radius: 10px;
   box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12);
+  text-align: left;
 }
 .inv-analyse__multi-actions {
   display: flex;
@@ -6808,6 +6809,7 @@ body {
   gap: 8px;
   padding: 7px 12px;
   font-size: 13px;
+  font-weight: 400;
   cursor: pointer;
 }
 .inv-analyse__check:hover {
@@ -6819,46 +6821,27 @@ body {
   padding: 0;
   font: inherit;
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 600;
   color: var(--ia-blue);
   cursor: pointer;
 }
 .inv-analyse__meta {
   margin-left: auto;
   font-size: 12px;
+  font-weight: 400;
   color: var(--ia-muted);
 }
 .inv-analyse__hint {
   margin: 0;
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 400;
   line-height: 1.45;
   color: var(--ia-muted);
+  text-align: left;
 }
-.inv-analyse__period-box {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-  gap: 10px;
-  padding: 14px 16px;
-  border: 1px solid var(--ia-border);
-  border-radius: 10px;
-  background: var(--ia-soft);
-}
-.inv-analyse__period-half {
-  min-width: 0;
-}
-.inv-analyse__period-val {
-  margin-top: 4px;
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
+.inv-analyse__hint strong {
+  font-weight: 600;
   color: var(--ia-ink);
-  font-variant-numeric: tabular-nums;
-}
-.inv-analyse__period-sep {
-  color: var(--ia-muted);
-  font-size: 16px;
-  padding-top: 12px;
 }
 .inv-analyse__btn {
   appearance: none;
@@ -6867,7 +6850,7 @@ body {
   color: #fff;
   font: inherit;
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 600;
   padding: 10px 16px;
   min-height: 40px;
   border-radius: 8px;
@@ -6890,10 +6873,12 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  text-align: left;
 }
 .inv-analyse__msg {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 13px;
+  font-weight: 400;
   line-height: 1.4;
   padding: 10px 12px;
   border-radius: 8px;
@@ -6911,7 +6896,6 @@ body {
 @media (max-width: 780px) {
   .inv-analyse__hero,
   .inv-analyse__card--action,
-  .inv-analyse__grid,
   .inv-analyse__col--meta {
     grid-template-columns: 1fr;
   }

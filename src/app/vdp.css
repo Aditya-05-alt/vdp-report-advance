@@ -1,4 +1,4 @@
-/* ─── VDP Prototype dashboard shell (sample-data UI) ─── */
+/* ??? VDP Prototype dashboard shell (sample-data UI) ??? */
 .vdp-root {
   --vdp-bg: #0f172a;
   --vdp-panel: #ffffff;
@@ -409,6 +409,23 @@
   /* Ensure Chart.js can measure a real box before first animate */
   overflow: hidden;
 }
+.vdp-chart-scroll {
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--vdp-border);
+  border-radius: 8px;
+  background: #fff;
+}
+.vdp-chart-scroll-inner {
+  height: 300px;
+  min-height: 300px;
+}
+.vdp-chart-scroll-inner .vdp-chart-fill {
+  height: 100%;
+  min-height: 300px;
+}
 .vdp-chart-fill canvas {
   display: block;
   position: absolute !important;
@@ -427,7 +444,7 @@
   line-height: 1.35;
 }
 
-/* Page Views — Period Compare: CURRENT/PRIOR + full-width extended chart */
+/* Page Views ? Period Compare: CURRENT/PRIOR + full-width extended chart */
 .vdp-card--page-compare {
   display: flex;
   flex-direction: column;
@@ -493,6 +510,125 @@
   border-radius: 8px;
   background: #fff;
 }
+.vdp-split-table {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  border: 1px solid var(--vdp-border);
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+  max-width: 100%;
+}
+/* Left freeze ? never moves on X */
+.vdp-split-table__freeze {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-right: 2px solid var(--vdp-border);
+  z-index: 2;
+  overflow: hidden;
+}
+.vdp-split-table__freeze-y {
+  flex: 1 1 auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.vdp-split-table__freeze-y::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+.vdp-split-table__freeze-y thead th,
+.vdp-split-table__freeze-y tbody td {
+  background: #fff;
+}
+.vdp-split-table__freeze-foot {
+  flex: 0 0 auto;
+  border-top: 2px solid var(--vdp-border);
+  background: #f1f5f9;
+}
+.vdp-split-table__freeze-foot td {
+  background: #f1f5f9 !important;
+  font-weight: 700;
+  border-bottom: none;
+}
+/* Right channels ? X scrollbar at very bottom (under total) */
+.vdp-split-table__channels {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  background: #fff;
+}
+.vdp-split-table__channels-inner {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+.vdp-split-table__channels-y {
+  flex: 1 1 auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* hide Y scrollbar so body/foot columns share the same width */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.vdp-split-table__channels-y::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+.vdp-split-table__channels-foot {
+  flex: 0 0 auto;
+  border-top: 2px solid var(--vdp-border);
+  background: #f1f5f9;
+}
+.vdp-split-table__channels-foot td {
+  font-weight: 700;
+  border-bottom: none;
+}
+.vdp-split-table .vdp-table-scroll--10 {
+  max-height: calc(52px + (10 * 37px));
+}
+.vdp-split-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: #fff;
+  box-shadow: 0 1px 0 var(--vdp-border);
+}
+.vdp-split-table thead tr:nth-child(2) th {
+  top: 30px;
+}
+.vdp-split-table .vdp-table {
+  border-collapse: collapse;
+}
+.vdp-split-table td,
+.vdp-split-table th {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.vdp-split-table__channels-foot .col-cur,
+.vdp-split-table__channels-y .col-cur {
+  background: #fff7ed;
+}
+.vdp-split-table__channels-foot .col-prev,
+.vdp-split-table__channels-y .col-prev {
+  background: #f8fafc;
+}
+.vdp-split-table__channels-foot .col-cur {
+  background: #fed7aa !important;
+}
+.vdp-split-table__channels-foot .col-prev {
+  background: #e2e8f0 !important;
+}
+.vdp-split-table .vdp-dealer-name {
+  white-space: nowrap;
+}
 /* Header + ~10 body rows visible; remaining dealers scroll */
 .vdp-table-scroll--10 {
   max-height: calc(42px + (10 * 37px));
@@ -528,6 +664,77 @@
   border-bottom: 1px solid var(--vdp-border);
   cursor: pointer;
   white-space: nowrap;
+}
+.vdp-table--channel-compare thead th.vdp-th-group {
+  text-align: center;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--vdp-border);
+  background: #f8fafc !important;
+  padding: 8px 6px;
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+}
+.vdp-table--channel-compare thead th.vdp-th-sub {
+  text-align: center;
+  vertical-align: middle;
+  font-size: 10px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 600;
+  color: #64748b;
+  padding: 5px 4px 6px;
+  cursor: default;
+  border-bottom: 1px solid var(--vdp-border);
+  box-shadow: none;
+}
+.vdp-table--channel-compare thead th.vdp-th-sub:hover {
+  color: #64748b;
+}
+.vdp-table--channel-compare thead th.col-cur {
+  background: #fff7ed !important; /* Current */
+  border-right: none;
+}
+.vdp-table--channel-compare thead th.col-prev {
+  background: #f1f5f9 !important; /* Prior */
+}
+.vdp-table--channel-compare thead th.vdp-th-pair-end {
+  border-right: 1px solid #cbd5e1;
+}
+.vdp-table--channel-compare thead th.vdp-th-group.vdp-th-pair-end {
+  border-right: 1px solid #cbd5e1;
+}
+.vdp-table--channel-compare td.col-cur {
+  background: #fff7ed;
+  text-align: right;
+}
+.vdp-table--channel-compare td.col-prev {
+  background: #f8fafc;
+  text-align: right;
+  border-right: 1px solid #e2e8f0;
+}
+.vdp-table--channel-compare tr:hover td.col-cur {
+  background: #ffedd5;
+}
+.vdp-table--channel-compare tr:hover td.col-prev {
+  background: #e2e8f0;
+}
+.vdp-table--channel-compare tfoot td.col-cur,
+.vdp-split-table__channels-foot td.col-cur,
+.vdp-split-table__freeze-foot td.col-cur {
+  background: #fed7aa !important;
+  font-weight: 700;
+}
+.vdp-table--channel-compare tfoot td.col-prev,
+.vdp-split-table__channels-foot td.col-prev,
+.vdp-split-table__freeze-foot td.col-prev {
+  background: #e2e8f0 !important;
+  font-weight: 700;
+  border-right: 1px solid #cbd5e1;
+}
+/* Sticky sub-header row sits under channel group headers */
+.vdp-split-table thead tr:nth-child(2) th {
+  top: 33px;
+  z-index: 4;
 }
 .vdp-table th:hover { color: var(--vdp-accent); }
 .vdp-table th.sorted { color: var(--vdp-accent); }
@@ -614,7 +821,7 @@
   padding-top: 14px;
 }
 
-/* ── VDP loading (blue accent — not admin lime) ── */
+/* ?? VDP loading (blue accent ? not admin lime) ?? */
 .vdp-load-banner {
   display: flex;
   align-items: center;
@@ -675,7 +882,7 @@
   z-index: 1;
 }
 
-/* All Dealers — single centered card loader (not per-card) */
+/* All Dealers ? single centered card loader (not per-card) */
 .vdp-view--card-loading {
   position: relative;
   min-height: 280px;
@@ -729,7 +936,7 @@
   to { transform: rotate(360deg); }
 }
 
-/* Nav progress on VDP pages — use blue, not admin accent */
+/* Nav progress on VDP pages ? use blue, not admin accent */
 body:has(.vdp-root) .nav-progress-bar {
   background: #2563eb;
   box-shadow: 0 0 10px rgba(37, 99, 235, 0.45);
@@ -739,7 +946,7 @@ body:has(.vdp-root) .nav-progress {
 }
 
 
-/* Login — prototype-aligned */
+/* Login ? prototype-aligned */
 .vdp-login-screen {
   min-height: 100vh;
   display: flex;
@@ -833,7 +1040,7 @@ body:has(.vdp-root) .nav-progress {
   .vdp-grid-2 { grid-template-columns: 1fr; }
 }
 
-/* CalendarRangePicker popup (portaled to body) — light VDP theme */
+/* CalendarRangePicker popup (portaled to body) ? light VDP theme */
 .cdr-pop.cdr-pop--vdp {
   --s2: #ffffff;
   --s3: #f1f5f9;
@@ -862,7 +1069,7 @@ body:has(.vdp-root) .nav-progress {
   filter: brightness(1.05);
 }
 
-/* VDP Overview � channel period comparison table */
+/* VDP Overview ? channel period comparison table */
 .vdp-cmp-panel { padding: 16px 18px 12px; }
 .vdp-cmp-head {
   display: flex;

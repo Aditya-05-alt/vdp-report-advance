@@ -81,8 +81,6 @@ export async function downloadInventoryCsv({
   clientIds = [],
   allDealers = false,
   source = 'both',
-  from,
-  to,
   filename,
   onCancelCheck,
 } = {}) {
@@ -99,8 +97,6 @@ export async function downloadInventoryCsv({
     qs.set('scope', 'ids');
     qs.set('clientIds', clientIds.join(','));
   }
-  if (from) qs.set('from', String(from).slice(0, 10));
-  if (to) qs.set('to', String(to).slice(0, 10));
 
   const res = await fetch(`/api/dashboard/inventory-download?${qs}`, {
     credentials: 'same-origin',
@@ -130,8 +126,8 @@ export async function downloadInventoryCsv({
     buildInventoryDownloadFilename({
       scopeLabel: allDealers ? 'all-dealers' : `dealers-${clientIds.length}`,
       source,
-      from: asOf || from,
-      to: asOf || to,
+      from: asOf,
+      to: asOf,
     });
 
   const url = URL.createObjectURL(blob);

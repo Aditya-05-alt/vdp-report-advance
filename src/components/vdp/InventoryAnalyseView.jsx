@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useClient } from '@/components/dashboard/ClientContext';
-import { useVdpDateRange } from '@/components/vdp/VdpDateRangeContext';
 import {
   downloadInventoryCsv,
   buildInventoryDownloadFilename,
@@ -18,7 +17,7 @@ const SCOPE_OPTS = [
   },
   {
     id: 'multi',
-    label: 'Multi Dealer',
+    label: 'Multiple Dealers',
     blurb: 'Pick several dealers to combine.',
   },
   {
@@ -30,7 +29,6 @@ const SCOPE_OPTS = [
 
 export default function InventoryAnalyseView() {
   const { dealers, client, loading: dealersLoading } = useClient();
-  const { from, to, curLabel } = useVdpDateRange();
   const [scope, setScope] = useState('all');
   const [clientId, setClientId] = useState('');
   const [multiIds, setMultiIds] = useState([]);
@@ -106,11 +104,6 @@ export default function InventoryAnalyseView() {
     );
   }, [scope, dealerOptions, multiIds, clientId]);
 
-  const periodLabel = useMemo(() => {
-    if (from && to) return from === to ? from : `${from} → ${to}`;
-    return curLabel || 'Current period';
-  }, [from, to, curLabel]);
-
   const multiTriggerLabel = useMemo(() => {
     if (!multiIds.length) return 'Select dealers…';
     if (multiIds.length === 1) {
@@ -134,10 +127,6 @@ export default function InventoryAnalyseView() {
       setError('Select at least one dealer.');
       return;
     }
-    if (!from || !to) {
-      setError('Pick a date range in the header calendar first.');
-      return;
-    }
     setDownloading(true);
     setError(null);
     setStatus(null);
@@ -146,8 +135,6 @@ export default function InventoryAnalyseView() {
         allDealers: scope === 'all',
         clientIds: selectedIds,
         source: invSource,
-        from,
-        to,
         filename: buildInventoryDownloadFilename({
           scopeLabel:
             scope === 'all'
@@ -157,8 +144,6 @@ export default function InventoryAnalyseView() {
                 : dealerOptions.find((d) => d.id === clientId)?.name ||
                   'single-dealer',
           source: invSource,
-          from,
-          to,
         }),
       });
       if (!result.ok) {
@@ -172,10 +157,12 @@ export default function InventoryAnalyseView() {
             ? 'Hoot only'
             : 'Scrap only';
       setStatus(
-        `Downloaded ${result.filename} · ${scopeLabel} · as of ${
-          result.asOf || to
+        `Downloaded ${result.filename} · ${scopeLabel} · daily ${
+          result.asOf ? `as of ${result.asOf}` : 'snapshot'
         } · ${srcLabel}${
-          result.rowCount != null ? ` · ${result.rowCount.toLocaleString()} rows` : ''
+          result.rowCount != null
+            ? ` · ${result.rowCount.toLocaleString()} rows`
+            : ''
         }`
       );
     } catch (err) {
@@ -199,17 +186,16 @@ export default function InventoryAnalyseView() {
       <div className="inv-analyse">
         <header className="inv-analyse__hero vdp-card">
           <div className="inv-analyse__col">
-            <p className="inv-analyse__eyebrow">Inventory</p>
-            <h2 className="inv-analyse__title">Inventory Analyse</h2>
+            <h2 className="inv-analyse__title">Inventory Analysis</h2>
             <p className="inv-analyse__sub">
-              Download Hoot and Scrap vehicle inventory for the selected dealers
-              and date range.
+              Download the latest daily Hoot and Scrap inventory for the selected
+              dealers.
             </p>
           </div>
           <div className="inv-analyse__col inv-analyse__col--meta" aria-label="Current filters">
             <div className="inv-analyse__chip">
-              <span className="inv-analyse__chip-k">Period</span>
-              <span className="inv-analyse__chip-v">{periodLabel}</span>
+              <span className="inv-analyse__chip-k">Data</span>
+              <span className="inv-analyse__chip-v">Latest daily snapshot</span>
             </div>
             <div className="inv-analyse__chip">
               <span className="inv-analyse__chip-k">Scope</span>
@@ -218,155 +204,126 @@ export default function InventoryAnalyseView() {
           </div>
         </header>
 
-        <div className="inv-analyse__grid">
-          <section className="vdp-card inv-analyse__card">
-            <div className="inv-analyse__card-head">
-              <h3>Dealer scope</h3>
-              <p className="vdp-cardsub">{scopeMeta.blurb}</p>
-            </div>
+        <section className="vdp-card inv-analyse__card">
+          <div className="inv-analyse__card-head">
+            <h3 className="inv-analyse__heading">Dealer scope</h3>
+            <p className="inv-analyse__sub">{scopeMeta.blurb}</p>
+          </div>
 
-            <div
-              className="inv-analyse__seg"
-              role="tablist"
-              aria-label="Dealer scope"
-            >
-              {SCOPE_OPTS.map((opt) => (
-                <button
-                  key={opt.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={scope === opt.id}
-                  className={`inv-analyse__seg-btn${
-                    scope === opt.id ? ' is-active' : ''
-                  }`}
-                  onClick={() => setScope(opt.id)}
+          <div
+            className="inv-analyse__seg"
+            role="tablist"
+            aria-label="Dealer scope"
+          >
+            {SCOPE_OPTS.map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                role="tab"
+                aria-selected={scope === opt.id}
+                className={`inv-analyse__seg-btn${
+                  scope === opt.id ? ' is-active' : ''
+                }`}
+                onClick={() => setScope(opt.id)}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="inv-analyse__fields">
+            {scope === 'single' && (
+              <label className="inv-analyse__field">
+                <span className="inv-analyse__label">Dealer</span>
+                <select
+                  value={clientId}
+                  onChange={(e) => setClientId(e.target.value)}
+                  className="inv-analyse__select"
+                  disabled={dealersLoading || !dealerOptions.length}
                 >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-
-            <div className="inv-analyse__fields">
-              {scope === 'single' && (
-                <label className="inv-analyse__field">
-                  <span className="inv-analyse__label">Dealer</span>
-                  <select
-                    value={clientId}
-                    onChange={(e) => setClientId(e.target.value)}
-                    className="inv-analyse__select"
-                    disabled={dealersLoading || !dealerOptions.length}
-                  >
-                    {!dealerOptions.length && (
-                      <option value="">No dealers</option>
-                    )}
-                    {dealerOptions.map((d) => (
-                      <option key={d.id} value={d.id}>
-                        {d.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-
-              {scope === 'multi' && (
-                <div className="inv-analyse__field inv-analyse__multi" ref={multiDropRef}>
-                  <span className="inv-analyse__label">Dealers</span>
-                  <button
-                    type="button"
-                    className={`inv-analyse__multi-trigger${
-                      multiOpen ? ' is-open' : ''
-                    }`}
-                    aria-haspopup="listbox"
-                    aria-expanded={multiOpen}
-                    onClick={() => setMultiOpen((o) => !o)}
-                  >
-                    <span>{multiTriggerLabel}</span>
-                    <span aria-hidden>{multiOpen ? '▴' : '▾'}</span>
-                  </button>
-                  {multiOpen && (
-                    <div className="inv-analyse__multi-pop">
-                      <div className="inv-analyse__multi-actions">
-                        <button
-                          type="button"
-                          className="inv-analyse__link"
-                          onClick={() =>
-                            setMultiIds(dealerOptions.map((d) => d.id))
-                          }
-                        >
-                          Select all
-                        </button>
-                        <button
-                          type="button"
-                          className="inv-analyse__link"
-                          onClick={() => setMultiIds([])}
-                        >
-                          Clear
-                        </button>
-                        <span className="inv-analyse__meta">
-                          {multiIds.length} selected
-                        </span>
-                      </div>
-                      <ul className="inv-analyse__multi-list">
-                        {dealerOptions.map((d) => (
-                          <li key={d.id}>
-                            <label className="inv-analyse__check">
-                              <input
-                                type="checkbox"
-                                checked={multiIds.includes(d.id)}
-                                onChange={() => toggleMultiId(d.id)}
-                              />
-                              <span>{d.name}</span>
-                            </label>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
+                  {!dealerOptions.length && (
+                    <option value="">No dealers</option>
                   )}
-                </div>
-              )}
+                  {dealerOptions.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
 
-              {scope === 'all' && (
-                <p className="inv-analyse__hint">
-                  Includes all <strong>{dealerOptions.length}</strong> dealers.
-                </p>
-              )}
-            </div>
-          </section>
+            {scope === 'multi' && (
+              <div className="inv-analyse__field inv-analyse__multi" ref={multiDropRef}>
+                <span className="inv-analyse__label">Dealers</span>
+                <button
+                  type="button"
+                  className={`inv-analyse__multi-trigger${
+                    multiOpen ? ' is-open' : ''
+                  }`}
+                  aria-haspopup="listbox"
+                  aria-expanded={multiOpen}
+                  onClick={() => setMultiOpen((o) => !o)}
+                >
+                  <span>{multiTriggerLabel}</span>
+                  <span aria-hidden>{multiOpen ? '▴' : '▾'}</span>
+                </button>
+                {multiOpen && (
+                  <div className="inv-analyse__multi-pop">
+                    <div className="inv-analyse__multi-actions">
+                      <button
+                        type="button"
+                        className="inv-analyse__link"
+                        onClick={() =>
+                          setMultiIds(dealerOptions.map((d) => d.id))
+                        }
+                      >
+                        Select all
+                      </button>
+                      <button
+                        type="button"
+                        className="inv-analyse__link"
+                        onClick={() => setMultiIds([])}
+                      >
+                        Clear
+                      </button>
+                      <span className="inv-analyse__meta">
+                        {multiIds.length} selected
+                      </span>
+                    </div>
+                    <ul className="inv-analyse__multi-list">
+                      {dealerOptions.map((d) => (
+                        <li key={d.id}>
+                          <label className="inv-analyse__check">
+                            <input
+                              type="checkbox"
+                              checked={multiIds.includes(d.id)}
+                              onChange={() => toggleMultiId(d.id)}
+                            />
+                            <span>{d.name}</span>
+                          </label>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
 
-          <section className="vdp-card inv-analyse__card">
-            <div className="inv-analyse__card-head">
-              <h3>Date range</h3>
-              <p className="vdp-cardsub">
-                Uses the calendar in the top header. Download is inventory as of
-                the latest snapshot day inside this range (same speed for 1 day
-                or a full month).
+            {scope === 'all' && (
+              <p className="inv-analyse__hint">
+                Includes all <strong>{dealerOptions.length}</strong> dealers.
               </p>
-            </div>
-            <div className="inv-analyse__period-box">
-              <div className="inv-analyse__period-half">
-                <span className="inv-analyse__label">From</span>
-                <div className="inv-analyse__period-val">{from || '—'}</div>
-              </div>
-              <div className="inv-analyse__period-sep" aria-hidden>
-                →
-              </div>
-              <div className="inv-analyse__period-half">
-                <span className="inv-analyse__label">To</span>
-                <div className="inv-analyse__period-val">{to || '—'}</div>
-              </div>
-            </div>
-            <p className="inv-analyse__hint">
-              Change dates with <strong>Current Month</strong> (or any preset) in
-              the header.
-            </p>
-          </section>
-        </div>
+            )}
+          </div>
+        </section>
 
         <section className="vdp-card inv-analyse__card inv-analyse__card--action">
           <div className="inv-analyse__col">
-            <h3>Download inventory</h3>
-            <p className="vdp-cardsub">
-              VIN, stock, year/make/model, price, condition, URL, and pull date.
+            <h3 className="inv-analyse__heading">Download inventory</h3>
+            <p className="inv-analyse__sub">
+              Latest daily snapshot from Hoot and Scrap — VIN, stock,
+              year/make/model, price, condition, URL, and pull date.
             </p>
           </div>
           <div className="inv-analyse__col inv-analyse__col--controls">
@@ -389,10 +346,7 @@ export default function InventoryAnalyseView() {
               className="inv-analyse__btn"
               onClick={onDownload}
               disabled={
-                downloading ||
-                !from ||
-                !to ||
-                (scope !== 'all' && !selectedIds.length)
+                downloading || (scope !== 'all' && !selectedIds.length)
               }
             >
               {downloading ? 'Preparing CSV…' : 'Download inventory CSV'}
@@ -401,8 +355,12 @@ export default function InventoryAnalyseView() {
 
           {(error || status) && (
             <div className="inv-analyse__msgs">
-              {error && <p className="inv-analyse__msg inv-analyse__msg--err">{error}</p>}
-              {status && <p className="inv-analyse__msg inv-analyse__msg--ok">{status}</p>}
+              {error && (
+                <p className="inv-analyse__msg inv-analyse__msg--err">{error}</p>
+              )}
+              {status && (
+                <p className="inv-analyse__msg inv-analyse__msg--ok">{status}</p>
+              )}
             </div>
           )}
         </section>

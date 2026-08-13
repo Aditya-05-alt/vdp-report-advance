@@ -18,7 +18,7 @@ const HOME_VIEWS = [
   {
     id: 'inventory-analyse',
     href: '/dashboard/inventory-analyse',
-    label: 'Inventory Analyse',
+    label: 'Inventory Analysis',
   },
 ];
 
@@ -65,7 +65,8 @@ export default function VdpShell({ children }) {
   const activeView = viewFromPath(pathname);
   const isDealerView = DEALER_VIEWS.some((v) => v.id === activeView);
   const isHomeView = HOME_VIEWS.some((v) => v.id === activeView);
-  const showDateRange = activeView !== 'source-mapping';
+  const showDateRange =
+    activeView !== 'source-mapping' && activeView !== 'inventory-analyse';
   const showOverviewCompare = activeView === 'overview';
   const asOfLabel = to ? `Data through ${to}` : `Period · ${curLabel}`;
 

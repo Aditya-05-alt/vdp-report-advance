@@ -15,9 +15,11 @@ function vehicleKey(row) {
 function normalizeRow(row) {
   const vin = String(row.inv_vin || '').trim();
   const stock = String(row.inv_stock_number || '').trim();
+  // Prefer VIN; if empty, fall back to stock number — never show blank when stock exists
+  const displayVin = vin || stock || '—';
   return {
-    // Prefer VIN; if empty, fall back to stock number
-    vin: vin || stock || '—',
+    vin: displayVin,
+    stock: stock || null,
     make: row.inv_make || 'Unknown',
     model: row.inv_model || 'Unknown',
     year: row.inv_year || '—',
@@ -128,7 +130,8 @@ export async function fetchInventoryPerformance({
     const vdp0 = prev?.views || 0;
     const vdp1 = row.views;
     return {
-      vin: row.vin,
+      vin: row.vin || row.stock || '—',
+      stock: row.stock || null,
       make: row.make,
       model: row.model,
       year: row.year,

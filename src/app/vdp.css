@@ -607,10 +607,19 @@
 .vdp-split-table .vdp-table {
   border-collapse: collapse;
 }
-.vdp-split-table td,
-.vdp-split-table th {
+.vdp-split-table td {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.vdp-split-table thead th {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+.vdp-split-table thead th.vdp-th-group {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: nowrap;
 }
 .vdp-split-table__channels-foot .col-cur,
 .vdp-split-table__channels-y .col-cur {
@@ -670,9 +679,12 @@
   vertical-align: middle;
   border-bottom: 1px solid var(--vdp-border);
   background: #f8fafc !important;
-  padding: 8px 6px;
+  padding: 8px 8px;
   font-size: 10.5px;
   letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
 }
 .vdp-table--channel-compare thead th.vdp-th-sub {
   text-align: center;

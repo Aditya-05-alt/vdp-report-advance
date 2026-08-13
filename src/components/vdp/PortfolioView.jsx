@@ -482,7 +482,7 @@ export default function PortfolioView() {
   const channelScrollRef = useRef(null);
   const syncingScrollRef = useRef(false);
 
-  const CHANNEL_COL_W = 80;
+  const CHANNEL_COL_W = compareActive ? 110 : 150;
   const DEALER_COL_W = 180;
   const TOTAL_COL_W = 88;
   const channelValueCols = displayChannels.length * (compareActive ? 2 : 1);

@@ -889,7 +889,8 @@ export default function PortfolioView() {
 
     const ordered = [...filteredDealerRows]
       .filter((r) => !r.error)
-      .sort((a, b) => b.total - a.total);
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 10);
 
     const labels = ordered.map((r) => r.dealer?.name || 'Dealer');
     const curVals = ordered.map((r) => r.total);
@@ -996,15 +997,15 @@ export default function PortfolioView() {
       ? `${metricLabel} by Channel — ${
           singleDealerRow?.dealer?.name || 'Dealer'
         } · ${filterScopeLabel}`
-      : `${metricLabel} by Dealer — ${filterScopeLabel}`;
+      : `${metricLabel} by Dealer — Top 10 · ${filterScopeLabel}`;
 
   const chartSub = compareActive
     ? chartMode === 'channel-bar'
       ? `${curLabel} vs ${priLabel} (${compareModeLabel}) · bar by channel for selected dealer`
-      : `${curLabel} vs ${priLabel} (${compareModeLabel}) · filtered to ${filterScopeLabel} · scroll horizontally for all dealers`
+      : `${curLabel} vs ${priLabel} (${compareModeLabel}) · filtered to ${filterScopeLabel} · top 10 dealers`
     : chartMode === 'channel-bar'
       ? `${curLabel} · bar by channel for selected dealer`
-      : `${curLabel} · filtered to ${filterScopeLabel} · scroll horizontally for all dealers`;
+      : `${curLabel} · filtered to ${filterScopeLabel} · top 10 dealers`;
 
   const openDealer = (dealer) => {
     if (dealer) pickClient(dealer);

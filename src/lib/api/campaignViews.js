@@ -10,10 +10,10 @@ export async function fetchCampaignViews({
   onCancelCheck,
 }) {
   if (!clientId || !from || !to) {
-    return { campaigns: [], daily: [] };
+    return { campaigns: [], daily: [], cells: [] };
   }
   if (typeof window === 'undefined') {
-    return { campaigns: [], daily: [] };
+    return { campaigns: [], daily: [], cells: [] };
   }
   if (onCancelCheck?.()) return null;
 
@@ -37,5 +37,6 @@ export async function fetchCampaignViews({
   return {
     campaigns: Array.isArray(json.campaigns) ? json.campaigns : [],
     daily: Array.isArray(json.daily) ? json.daily : [],
+    cells: Array.isArray(json.cells) ? json.cells : [],
   };
 }

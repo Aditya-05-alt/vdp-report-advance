@@ -1,6 +1,6 @@
 -- Fast dealer-scoped WA campaign views for Campaign Views tab (advance).
 -- Only session_campaign values that start with "WA|" or "WA |" (optional space).
--- Returns structured JSON: { campaigns, daily, meta } in one round-trip.
+-- Returns structured JSON: { campaigns, daily, cells, meta } in one round-trip.
 --
 -- Deploy in Supabase SQL editor, then create the supporting index (run separately
 -- if the table is large — CONCURRENTLY cannot run inside a transaction):
@@ -86,6 +86,15 @@ BEGIN
     FROM base b
     GROUP BY b.report_date
   ),
+  by_date_campaign AS (
+    SELECT
+      b.report_date,
+      b.campaign,
+      SUM(b.views)::bigint AS views
+    FROM base b
+    GROUP BY b.report_date, b.campaign
+    HAVING SUM(b.views) > 0
+  ),
   campaigns_json AS (
     SELECT COALESCE(
       jsonb_agg(
@@ -120,10 +129,25 @@ BEGIN
       '[]'::jsonb
     ) AS arr
     FROM by_date d
+  ),
+  cells_json AS (
+    SELECT COALESCE(
+      jsonb_agg(
+        jsonb_build_object(
+          'report_date', c.report_date,
+          'campaign', c.campaign,
+          'views', c.views
+        )
+        ORDER BY c.report_date, c.campaign
+      ),
+      '[]'::jsonb
+    ) AS arr
+    FROM by_date_campaign c
   )
   SELECT jsonb_build_object(
     'campaigns', c.arr,
     'daily', d.arr,
+    'cells', x.arr,
     'meta', jsonb_build_object(
       'client_id', v_client_id,
       'from', p_from,
@@ -140,11 +164,13 @@ BEGIN
   )
   INTO v_result
   FROM campaigns_json c
-  CROSS JOIN daily_json d;
+  CROSS JOIN daily_json d
+  CROSS JOIN cells_json x;
 
   RETURN COALESCE(v_result, jsonb_build_object(
     'campaigns', '[]'::jsonb,
     'daily', '[]'::jsonb,
+    'cells', '[]'::jsonb,
     'meta', jsonb_build_object(
       'client_id', v_client_id,
       'from', p_from,
@@ -163,4 +189,4 @@ GRANT EXECUTE ON FUNCTION public.get_wa_campaign_views_advance(text, date, date,
   TO anon, authenticated, service_role;
 
 COMMENT ON FUNCTION public.get_wa_campaign_views_advance(text, date, date, text) IS
-  'Advance: dealer-scoped WA| / WA | session_campaign views + date-wise totals as jsonb.';
+  'Advance: dealer-scoped WA| / WA | session_campaign views, date totals, and date×campaign cells as jsonb.';

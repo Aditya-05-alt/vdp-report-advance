@@ -15,6 +15,12 @@ export async function GET(request) {
   const from = searchParams.get('from')?.slice(0, 10);
   const to = searchParams.get('to')?.slice(0, 10);
   const pageType = searchParams.get('pageType')?.trim() || 'ALL';
+  const conditionRaw = searchParams.get('condition')?.trim() || 'BOTH';
+  const condition = ['NEW', 'USED', 'BOTH', 'ALL'].includes(
+    conditionRaw.toUpperCase()
+  )
+    ? conditionRaw.toUpperCase()
+    : 'BOTH';
   const clientIds = searchParams
     .getAll('clientId')
     .map((id) => id.trim())
@@ -42,6 +48,7 @@ export async function GET(request) {
     p_to: to,
     p_page_type: pageType,
     p_client_ids: clientIds.length ? clientIds : null,
+    p_condition: condition === 'ALL' ? 'BOTH' : condition,
   };
 
   const { data, error } = await supabase.rpc(

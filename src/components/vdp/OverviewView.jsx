@@ -20,6 +20,8 @@ import { useVdpDateRange } from './VdpDateRangeContext';
 import { useSoftLoadPercent } from './useSoftLoadPercent';
 import VdpChannelCmpTable from './VdpChannelCmpTable';
 import { Card, Kpi, Seg, Toolbar, ToolbarGroup } from './VdpUi';
+import { VDP_COMPARE_MODES } from '@/lib/vdp/dateRange';
+
 const METRIC_OPTS = [
   { value: 'vdp', label: 'VDP' },
   { value: 'page', label: 'Page Views' },
@@ -31,6 +33,13 @@ function cumulativeFromDaily(dateList, dailyMap) {
     running += Number(dailyMap[iso]) || 0;
     return running;
   });
+}
+
+function formatShortDay(iso) {
+  if (!iso) return '';
+  const d = new Date(`${iso}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return String(iso).slice(5);
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 function sumDailyMap(dailyMap) {
@@ -76,7 +85,7 @@ function buildSourceCompareChart(
   curLabel,
   priLabel,
   curColor = '#2563eb',
-  priColor = '#94a3b8'
+  priColor = '#858B9A'
 ) {
   const curMap = {};
   for (const r of curRows || []) {
@@ -135,6 +144,17 @@ function buildNewUsedChart(rows) {
   };
 }
 
+function sumUnknownViews(rows) {
+  let sum = 0;
+  for (const row of rows || []) {
+    const name = String(row.condition_bucket || '').toLowerCase();
+    const views = Number(row.views) || 0;
+    if (name.startsWith('new') || name.startsWith('used')) continue;
+    sum += views;
+  }
+  return sum;
+}
+
 function newUsedCounts(chart) {
   const data = chart?.datasets?.[0]?.data || [];
   const newVal = Number(data[0]) || 0;
@@ -170,7 +190,7 @@ function NewUsedLegend({ chart }) {
   );
 }
 
-function TopVehiclesTable({ rows, showMom }) {
+function TopVehiclesTable({ rows, showMom, comparePctLabel = 'MoM' }) {
   if (!rows?.length) {
     return (
       <div style={{ color: 'var(--vdp-muted)', fontSize: 13, padding: 12 }}>
@@ -184,7 +204,7 @@ function TopVehiclesTable({ rows, showMom }) {
         <tr>
           <th>Vehicle</th>
           <th className="right">VDP</th>
-          {showMom ? <th className="right">MoM</th> : null}
+          {showMom ? <th className="right">{comparePctLabel}</th> : null}
         </tr>
       </thead>
       <tbody>
@@ -219,7 +239,18 @@ export default function OverviewView() {
     curLabel,
     priLabel,
     compareEnabled,
+    compareMode,
+    toggleCompareMode,
   } = useVdpDateRange();
+  const compareActive = compareMode === 'mom' || compareMode === 'pop';
+  const showCompare = Boolean(priFrom && priTo && (compareActive || compareEnabled));
+  const comparePctLabel = compareMode === 'pop' ? 'PoP %' : 'MoM %';
+  const compareModeLabel =
+    compareMode === 'pop'
+      ? 'PoP · same dates last month'
+      : compareMode === 'mom'
+        ? 'MoM · full last month'
+        : 'Compare';
   const [metric, setMetric] = useState('vdp');
   const [metricSwitching, setMetricSwitching] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -275,7 +306,7 @@ export default function OverviewView() {
 
     setLoading(true);
     setError(null);
-    const withCompare = Boolean(compareEnabled && priFrom && priTo);
+    const withCompare = Boolean(showCompare);
     setProgress({ completed: 0, total: withCompare ? 12 : 6 });
 
     const track = (promise) =>
@@ -497,7 +528,7 @@ export default function OverviewView() {
         setProgress(null);
       }
     }
-  }, [canLoad, ga4Id, curFrom, curTo, priFrom, priTo, compareEnabled]);
+  }, [canLoad, ga4Id, curFrom, curTo, priFrom, priTo, showCompare]);
 
   useEffect(() => {
     if (dealersLoading) return undefined;
@@ -551,31 +582,63 @@ export default function OverviewView() {
     () => cumulativeFromDaily(curDates, activeCurDaily),
     [curDates, activeCurDaily]
   );
-  const seriesPri = useMemo(
-    () => cumulativeFromDaily(priDates, activePriDaily),
-    [priDates, activePriDaily]
-  );
+  // MoM: full prior month on the chart. PoP: align to current day count.
+  const seriesPri = useMemo(() => {
+    const datesForPri =
+      compareMode === 'mom'
+        ? priDates
+        : priDates.slice(0, Math.max(curDates.length, 0));
+    return cumulativeFromDaily(datesForPri, activePriDaily);
+  }, [priDates, curDates.length, activePriDaily, compareMode]);
+
+  const chartComparePriLabel = useMemo(() => {
+    if (!showCompare || !priDates.length) return priLabel;
+    // MoM: full prior month label (not truncated to current MTD days)
+    if (compareMode === 'mom') return priLabel;
+    const aligned = priDates.slice(0, curDates.length);
+    const a = aligned[0];
+    const b = aligned[aligned.length - 1];
+    if (!a || !b) return priLabel;
+    return a === b ? formatShortDay(a) : `${formatShortDay(a)}–${formatShortDay(b)}`;
+  }, [showCompare, priDates, curDates, priLabel, compareMode]);
 
   const dayCount = Math.max(curDates.length, 1);
   const avgPerDay = safeDiv(activeCurTotal, dayCount);
 
   const lineData = useMemo(() => {
-    const len = Math.max(seriesCur.length, seriesPri.length, 1);
-    const labels = Array.from({ length: len }, (_, i) => {
-      const iso = curDates[i] || priDates[i];
-      if (!iso) return `Day ${i + 1}`;
+    const isMomFull = showCompare && compareMode === 'mom';
+    const axisLen = isMomFull
+      ? Math.max(seriesCur.length, seriesPri.length, 1)
+      : Math.max(seriesCur.length, 1);
+
+    const labels = Array.from({ length: axisLen }, (_, i) => {
+      if (isMomFull) {
+        // Day-of-month index so current MTD and full prior month share one axis
+        return String(i + 1);
+      }
+      const iso = curDates[i];
+      if (!iso) return String(i + 1);
       const d = new Date(`${iso}T00:00:00`);
-      if (Number.isNaN(d.getTime())) return `Day ${i + 1}`;
+      if (Number.isNaN(d.getTime())) return iso;
       return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
     });
+
+    const curSeries = isMomFull
+      ? [
+          ...seriesCur,
+          ...Array(Math.max(0, axisLen - seriesCur.length)).fill(null),
+        ]
+      : seriesCur;
+
     const datasets = [
       {
         label: `${curLabel} (current)`,
-        data: seriesCur,
+        data: curSeries,
         borderColor: '#2563eb',
         backgroundColor: 'rgba(37,99,235,.08)',
         fill: true,
         tension: 0.3,
+        spanGaps: false,
         pointRadius: 0,
         pointHoverRadius: 6,
         pointHitRadius: 12,
@@ -585,14 +648,18 @@ export default function OverviewView() {
         borderWidth: 2.5,
       },
     ];
-    if (compareEnabled && priFrom && priTo) {
+    if (showCompare && priFrom && priTo) {
+      const priSeries = isMomFull
+        ? seriesPri
+        : seriesPri.slice(0, seriesCur.length);
       datasets.push({
-        label: `${priLabel} (prior)`,
-        data: seriesPri,
+        label: `${chartComparePriLabel} (prior)`,
+        data: priSeries,
         borderColor: '#94a3b8',
         backgroundColor: 'transparent',
         borderDash: [5, 4],
         tension: 0.3,
+        spanGaps: false,
         pointRadius: 0,
         pointHoverRadius: 5,
         pointHitRadius: 12,
@@ -607,13 +674,23 @@ export default function OverviewView() {
     seriesCur,
     seriesPri,
     curLabel,
-    priLabel,
+    chartComparePriLabel,
     curDates,
-    priDates,
-    compareEnabled,
+    showCompare,
+    compareMode,
     priFrom,
     priTo,
   ]);
+
+  const cumulativeChartSub = useMemo(() => {
+    if (!showCompare) {
+      return `Running total through ${curLabel} — hover a day for values`;
+    }
+    if (compareMode === 'mom') {
+      return `Running total, ${curLabel} (current) vs full prior month (${priLabel}) — hover a day for values`;
+    }
+    return `Running total, ${curLabel} vs. ${chartComparePriLabel} — hover a day for values`;
+  }, [showCompare, compareMode, curLabel, priLabel, chartComparePriLabel]);
 
   const lineOptions = useMemo(
     () => ({
@@ -681,7 +758,7 @@ export default function OverviewView() {
         curLabel,
         priLabel,
         isVdp ? '#2563eb' : '#93c5fd',
-        '#94a3b8'
+        '#858B9A'
       ),
     [
       isVdp,
@@ -720,6 +797,19 @@ export default function OverviewView() {
   const newUsedTotal =
     (newUsedChart.datasets[0]?.data?.[0] || 0) +
     (newUsedChart.datasets[0]?.data?.[1] || 0);
+  const newUsedPriTotal =
+    (newUsedPriChart.datasets[0]?.data?.[0] || 0) +
+    (newUsedPriChart.datasets[0]?.data?.[1] || 0);
+  const newUsedMom = safeDiv(newUsedTotal - newUsedPriTotal, newUsedPriTotal) * 100;
+
+  const unknownTotal = useMemo(
+    () => sumUnknownViews(conditionRows),
+    [conditionRows]
+  );
+  const unknownPriTotal = useMemo(
+    () => sumUnknownViews(conditionPriRows),
+    [conditionPriRows]
+  );
 
   const donutOptions = useMemo(
     () => ({
@@ -764,10 +854,17 @@ export default function OverviewView() {
         <ToolbarGroup label="Metric">
           <Seg value={metric} options={METRIC_OPTS} onChange={handleMetricChange} />
         </ToolbarGroup>
+        <ToolbarGroup label="Compare">
+          <Seg
+            value={compareMode}
+            options={VDP_COMPARE_MODES}
+            onChange={toggleCompareMode}
+          />
+        </ToolbarGroup>
         <ToolbarGroup label="Period">
           <span className="vdp-period-hint">
-            {compareEnabled && priFrom && priTo
-              ? `${curLabel} vs ${priLabel}`
+            {showCompare
+              ? `${curLabel} vs ${priLabel}${compareActive ? ` (${compareModeLabel})` : ''}`
               : curLabel}
           </span>
         </ToolbarGroup>
@@ -792,9 +889,9 @@ export default function OverviewView() {
         <Kpi
           label={`${metricLabel} · ${curLabel}`}
           value={fmt(activeCurTotal)}
-          delta={compareEnabled ? activeMom : null}
+          delta={showCompare ? activeMom : null}
           sub={
-            compareEnabled
+            showCompare
               ? `vs ${fmt(activePriTotal)} (${priLabel})`
               : curLabel
           }
@@ -803,9 +900,9 @@ export default function OverviewView() {
           <Kpi
             label="VDP Rate (VDP / Page Views)"
             value={`${rateCur.toFixed(1)}%`}
-            delta={compareEnabled ? rateCur - ratePri : null}
+            delta={showCompare ? rateCur - ratePri : null}
             sub={
-              compareEnabled
+              showCompare
                 ? `vs ${ratePri.toFixed(1)}% prior`
                 : 'Current period'
             }
@@ -821,25 +918,30 @@ export default function OverviewView() {
           <Kpi
             label="New + Used VDP"
             value={fmt(newUsedTotal)}
-            sub="Condition share below"
+            delta={showCompare ? newUsedMom : null}
+            sub={
+              showCompare
+                ? `Unknown ${fmt(unknownTotal)} vs ${fmt(unknownPriTotal)} (${priLabel})`
+                : `Unknown ${fmt(unknownTotal)} · Condition share below`
+            }
           />
         ) : (
           <Kpi
             label={`Prior ${metricLabel}`}
-            value={compareEnabled ? fmt(activePriTotal) : '—'}
-            sub={compareEnabled ? priLabel : 'Compare period off'}
+            value={showCompare ? fmt(activePriTotal) : '—'}
+            sub={showCompare ? priLabel : 'Compare period off'}
           />
         )}
       </div>
 
       {isVdp ? (
         <>
-          {compareEnabled ? (
+          {showCompare ? (
             <>
               <Card
                 className="vdp-card--chart"
                 title={`Cumulative ${metricLabel}`}
-                sub={`Running total, ${curLabel} vs. ${priLabel} — hover a day for values`}
+                sub={cumulativeChartSub}
                 style={{ marginBottom: 16 }}
               >
                 <VdpChart
@@ -946,7 +1048,11 @@ export default function OverviewView() {
                   title="Top 5 Vehicles by VDP Views"
                   sub="Current period · smart_final_data"
                 >
-                  <TopVehiclesTable rows={topVehicles} showMom />
+                  <TopVehiclesTable
+                    rows={topVehicles}
+                    showMom
+                    comparePctLabel={comparePctLabel}
+                  />
                 </Card>
               </div>
 
@@ -1001,6 +1107,10 @@ export default function OverviewView() {
             clientId={ga4Id}
             from={curFrom}
             to={curTo}
+            priorFrom={priFrom}
+            priorTo={priTo}
+            compareMode={compareMode}
+            metric="vdp"
           />
         </>
       ) : (
@@ -1008,7 +1118,7 @@ export default function OverviewView() {
           <Card
             className="vdp-card--chart vdp-card--page-compare"
             title="Cumulative Page Views"
-            sub={`Running total, ${curLabel} vs. ${priLabel} — hover a day for values`}
+            sub={cumulativeChartSub}
             style={{ marginBottom: 16 }}
           >
             <div className="vdp-chart-fill vdp-chart-fill--page">
@@ -1027,21 +1137,21 @@ export default function OverviewView() {
             className="vdp-card--chart"
             title="Page Views by Source"
             sub={
-              compareEnabled
+              showCompare
                 ? `${curLabel} vs ${priLabel} · all page views`
                 : `${curLabel} · all page views`
             }
           >
-            {!(compareEnabled ? sourceCompareChart : sourceChart).labels.length ? (
+            {!(showCompare ? sourceCompareChart : sourceChart).labels.length ? (
               <div style={{ color: 'var(--vdp-muted)', fontSize: 13, padding: 12 }}>
                 No channel data for this period.
               </div>
             ) : (
               <div className="vdp-chart-fill vdp-chart-fill--page-source">
                 <VdpChart
-                  key={`ov-source-${metric}-${compareEnabled ? 'cmp' : 'single'}`}
+                  key={`ov-source-${metric}-${showCompare ? 'cmp' : 'single'}`}
                   type="bar"
-                  data={compareEnabled ? sourceCompareChart : sourceChart}
+                  data={showCompare ? sourceCompareChart : sourceChart}
                   options={sourceOptions}
                   fill
                   animate
@@ -1049,6 +1159,16 @@ export default function OverviewView() {
               </div>
             )}
           </Card>
+
+          <VdpChannelCmpTable
+            clientId={ga4Id}
+            from={curFrom}
+            to={curTo}
+            priorFrom={priFrom}
+            priorTo={priTo}
+            compareMode={compareMode}
+            metric="page"
+          />
         </>
       )}
     </div>

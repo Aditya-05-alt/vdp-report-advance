@@ -106,6 +106,7 @@ async function fetchMatrixChunkViaApi({
   from,
   to,
   pageTypeFilter,
+  condition = 'BOTH',
   clientIds,
   onCancelCheck,
 }) {
@@ -116,6 +117,7 @@ async function fetchMatrixChunkViaApi({
     from,
     to,
     pageType: pageTypeFilter || 'ALL',
+    condition: condition || 'BOTH',
   });
   for (const clientId of clientIds || []) {
     qs.append('clientId', clientId);
@@ -142,6 +144,7 @@ async function fetchChunkResilient({
   from,
   to,
   pageTypeFilter,
+  condition = 'BOTH',
   clientIds,
   onCancelCheck,
   failedClientIds,
@@ -153,6 +156,7 @@ async function fetchChunkResilient({
       from,
       to,
       pageTypeFilter,
+      condition,
       clientIds,
       onCancelCheck,
     });
@@ -178,6 +182,7 @@ async function fetchChunkResilient({
         from,
         to,
         pageTypeFilter,
+        condition,
         clientIds: part,
         onCancelCheck,
         failedClientIds,
@@ -215,6 +220,7 @@ export async function fetchAllDealersChannelMatrix({
   from,
   to,
   pageTypeFilter = 'ALL',
+  condition = 'BOTH',
   onProgress,
   onCancelCheck,
 }) {
@@ -233,6 +239,12 @@ export async function fetchAllDealersChannelMatrix({
   const total = chunks.length;
   let completed = 0;
   const rpcRows = [];
+  const conditionParam =
+    condition === 'new' || condition === 'NEW'
+      ? 'NEW'
+      : condition === 'used' || condition === 'USED'
+        ? 'USED'
+        : 'BOTH';
 
   onProgress?.({ completed: 0, total });
 
@@ -244,6 +256,7 @@ export async function fetchAllDealersChannelMatrix({
           from,
           to,
           pageTypeFilter,
+          condition: conditionParam,
           clientIds,
           onCancelCheck,
           failedClientIds,

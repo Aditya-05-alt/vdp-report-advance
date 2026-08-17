@@ -7,6 +7,7 @@ import {
   fetchAllDealersChannelMatrix,
   sliceMapForRow,
 } from '@/lib/api/allDealerChannelMatrix';
+import { fetchAllDealersConditionTotals } from '@/lib/api/allDealerConditionTotals';
 import { colorForChannel } from '@/lib/ga4/channelDisplay';
 import { fmt, pct, momClass, safeDiv } from '@/lib/vdp/aggregates';
 import VdpChart from './VdpChart';
@@ -69,6 +70,263 @@ function buildChannelGrid(matrixRows, columns) {
   return { dealerRows, allChannelTotals, allTotal, columns };
 }
 
+function channelMatrixSortValue(
+  row,
+  key,
+  { channelId, channelGrid, priorByDealer, channelValue }
+) {
+  if (key === 'name') return String(row.dealer?.name || '').toLowerCase();
+  if (key === 'total') return Number(row.total) || 0;
+  if (key === 'totalPri') {
+    const priorRow = priorByDealer.get(dealerKey(row.dealer));
+    if (channelId === 'all') return Math.round(Number(priorRow?.total) || 0);
+    return channelValue(priorRow, channelId);
+  }
+  if (String(key).startsWith('ch:')) {
+    const id = String(key).slice(3);
+    if (channelId !== 'all' && id !== channelId) return 0;
+    const idx = channelGrid.columns.indexOf(id);
+    if (idx < 0) return 0;
+    return Number(row.cells[idx]) || 0;
+  }
+  if (String(key).startsWith('chPri:')) {
+    const id = String(key).slice(6);
+    const priorRow = priorByDealer.get(dealerKey(row.dealer));
+    return channelValue(priorRow, id);
+  }
+  return 0;
+}
+
+function SortableTh({
+  children,
+  className = '',
+  style,
+  sortKey,
+  channelSort,
+  onChannelSort,
+  rowSpan,
+  colSpan,
+}) {
+  const active = channelSort.k === sortKey;
+  return (
+    <th
+      className={`${className}${active ? ' sorted' : ''} vdp-th-sortable`.trim()}
+      style={style}
+      rowSpan={rowSpan}
+      colSpan={colSpan}
+      onClick={() => onChannelSort(sortKey)}
+    >
+      <div className="vdp-col-sort">
+        <span className="vdp-col-sort-label">{children}</span>
+        <span className="vdp-col-sort-arrows" aria-hidden="true">
+          <button
+            type="button"
+            className={active && channelSort.dir === 1 ? 'active' : ''}
+            aria-label="Sort low to high"
+            onClick={(e) => {
+              e.stopPropagation();
+              onChannelSort(sortKey, 1);
+            }}
+          >
+            ▲
+          </button>
+          <button
+            type="button"
+            className={active && channelSort.dir === -1 ? 'active' : ''}
+            aria-label="Sort high to low"
+            onClick={(e) => {
+              e.stopPropagation();
+              onChannelSort(sortKey, -1);
+            }}
+          >
+            ▼
+          </button>
+        </span>
+      </div>
+    </th>
+  );
+}
+
+/** Custom single-select channel dropdown (not native select). */
+function ChannelDropdown({ value, options, onChange, disabled }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDoc = (e) => {
+      if (!rootRef.current?.contains(e.target)) setOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const items = useMemo(
+    () => [{ id: 'all', name: 'All Channels' }, ...(options || [])],
+    [options]
+  );
+
+  const selectedLabel =
+    items.find((o) => o.id === value)?.name || 'All Channels';
+
+  return (
+    <div className={`vdp-channel-dd${open ? ' is-open' : ''}`} ref={rootRef}>
+      <button
+        type="button"
+        className={`vdp-channel-dd-trigger${open ? ' is-open' : ''}`}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        disabled={disabled}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className="vdp-channel-dd-trigger-text">{selectedLabel}</span>
+        <span className="vdp-channel-dd-chevron" aria-hidden>
+          {open ? '▴' : '▾'}
+        </span>
+      </button>
+      {open ? (
+        <ul className="vdp-channel-dd-menu" role="listbox">
+          {items.map((o) => {
+            const active = o.id === value;
+            return (
+              <li key={o.id} role="option" aria-selected={active}>
+                <button
+                  type="button"
+                  className={`vdp-channel-dd-option${active ? ' is-active' : ''}`}
+                  onClick={() => {
+                    onChange(o.id);
+                    setOpen(false);
+                  }}
+                >
+                  {o.name}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+/** Searchable multi-select for dealers (empty selection = all dealers). */
+function DealerMultiFilter({ options, selectedIds, onChange, disabled, showLabel = true }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const rootRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDoc = (e) => {
+      if (!rootRef.current?.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) setQuery('');
+  }, [open]);
+
+  const selectedSet = useMemo(() => new Set(selectedIds || []), [selectedIds]);
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return options;
+    return options.filter((o) => String(o.name || '').toLowerCase().includes(q));
+  }, [options, query]);
+
+  const triggerLabel = !selectedIds?.length
+    ? 'All dealers'
+    : selectedIds.length === 1
+      ? options.find((o) => o.id === selectedIds[0])?.name || '1 dealer'
+      : `${selectedIds.length} dealers`;
+
+  const toggleId = (id) => {
+    const next = new Set(selectedSet);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    onChange([...next]);
+  };
+
+  return (
+    <div className="vdp-dealer-multi" ref={rootRef}>
+      {showLabel ? <label className="vdp-dealer-multi-lbl">Dealers</label> : null}
+      <button
+        type="button"
+        className={`vdp-dealer-multi-trigger${open ? ' is-open' : ''}`}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        disabled={disabled}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className="vdp-dealer-multi-trigger-text">{triggerLabel}</span>
+        <span aria-hidden>{open ? '▴' : '▾'}</span>
+      </button>
+      {open ? (
+        <div className="vdp-dealer-multi-pop" role="listbox" aria-multiselectable="true">
+          <input
+            type="search"
+            className="vdp-dealer-multi-search"
+            placeholder="Search dealers…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            autoFocus
+          />
+          <div className="vdp-dealer-multi-actions">
+            <button
+              type="button"
+              className="vdp-dealer-multi-link"
+              onClick={() => onChange(options.map((o) => o.id))}
+            >
+              Select all
+            </button>
+            <button
+              type="button"
+              className="vdp-dealer-multi-link"
+              onClick={() => onChange([])}
+            >
+              Clear
+            </button>
+            <span className="vdp-dealer-multi-count">
+              {selectedIds?.length
+                ? `${selectedIds.length} selected`
+                : 'Showing all'}
+            </span>
+          </div>
+          <ul className="vdp-dealer-multi-list">
+            {filtered.length === 0 ? (
+              <li className="vdp-dealer-multi-empty">No dealers match</li>
+            ) : (
+              filtered.map((o) => {
+                const checked = selectedSet.has(o.id);
+                return (
+                  <li key={o.id}>
+                    <label className="vdp-dealer-multi-item">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleId(o.id)}
+                      />
+                      <span>{o.name}</span>
+                    </label>
+                  </li>
+                );
+              })
+            )}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function PortfolioView() {
   const router = useRouter();
   const {
@@ -81,17 +339,23 @@ export default function PortfolioView() {
 
   const [metric, setMetric] = useState('vdp');
   const [channelId, setChannelId] = useState('all');
-  const [sort, setSort] = useState({ k: 'pv1', dir: -1 });
+  const [sort, setSort] = useState({ k: 'name', dir: 1 });
+  const [channelSort, setChannelSort] = useState({ k: 'name', dir: 1 });
+  const [selectedDealerIds, setSelectedDealerIds] = useState([]);
 
   const [pageCur, setPageCur] = useState({ rows: [], columns: [] });
   const [pagePri, setPagePri] = useState({ rows: [], columns: [] });
   const [vdpCur, setVdpCur] = useState({ rows: [], columns: [] });
   const [vdpPri, setVdpPri] = useState({ rows: [], columns: [] });
+  /** Lightweight New/Used/Unknown rows from condition-totals RPC. */
+  const [conditionTotalsRows, setConditionTotalsRows] = useState([]);
+  const [conditionSplitReady, setConditionSplitReady] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [progress, setProgress] = useState(null);
   const cancelRef = useRef(false);
   const loadGenRef = useRef(0);
+  const conditionGenRef = useRef(0);
 
   const {
     from: curFrom,
@@ -151,6 +415,7 @@ export default function PortfolioView() {
         from,
         to,
         pageTypeFilter,
+        condition: 'BOTH',
         onProgress: (prog) => {
           progressParts[idx] = prog.total
             ? prog.completed / prog.total
@@ -200,7 +465,47 @@ export default function PortfolioView() {
         setProgress(null);
       }
     }
-  }, [portfolioDealers, curFrom, curTo, priFrom, priTo, compareActive]);
+  }, [
+    portfolioDealers,
+    curFrom,
+    curTo,
+    priFrom,
+    priTo,
+    compareActive,
+  ]);
+
+  const loadConditionTotals = useCallback(async () => {
+    if (!portfolioDealers.length || !curFrom || !curTo) {
+      setConditionTotalsRows([]);
+      setConditionSplitReady(false);
+      return;
+    }
+
+    const gen = conditionGenRef.current + 1;
+    conditionGenRef.current = gen;
+    const isStale = () => conditionGenRef.current !== gen;
+
+    setConditionSplitReady(false);
+    try {
+      // Always use the fast all-channel totals RPC. Channel filter is applied
+      // in the KPI by scaling with that channel's share of VDP (matrix).
+      const rows = await fetchAllDealersConditionTotals({
+        dealers: portfolioDealers,
+        from: curFrom,
+        to: curTo,
+        channel: null,
+        onCancelCheck: () => isStale(),
+      });
+      if (isStale()) return;
+      setConditionTotalsRows(rows);
+      setConditionSplitReady(true);
+    } catch {
+      if (!isStale()) {
+        setConditionTotalsRows([]);
+        setConditionSplitReady(true);
+      }
+    }
+  }, [portfolioDealers, curFrom, curTo]);
 
   useEffect(() => {
     if (dealersLoading) return undefined;
@@ -209,6 +514,12 @@ export default function PortfolioView() {
       cancelRef.current = true;
     };
   }, [dealersLoading, loadMatrix]);
+
+  useEffect(() => {
+    if (dealersLoading) return undefined;
+    loadConditionTotals();
+    return undefined;
+  }, [dealersLoading, loadConditionTotals]);
 
   const activeMatrix = metric === 'vdp' ? vdpCur : pageCur;
   const priorMatrix = metric === 'vdp' ? vdpPri : pagePri;
@@ -253,16 +564,84 @@ export default function PortfolioView() {
       ? 'All Channels'
       : channelOptions.find((c) => c.id === channelId)?.name || 'All Channels';
 
+  const filterScopeLabel = channelLabel;
+
+  const dealerFilterOptions = useMemo(() => {
+    const rows = channelGrid.dealerRows || [];
+    return rows
+      .map((row) => ({
+        id: dealerKey(row.dealer),
+        name: row.dealer?.name || 'Unnamed',
+      }))
+      .filter((o) => o.id)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [channelGrid.dealerRows]);
+
+  const selectedDealerIdSet = useMemo(() => {
+    if (!selectedDealerIds.length) return null;
+    return new Set(selectedDealerIds);
+  }, [selectedDealerIds]);
+
+  // Drop selections that disappeared after data reload / channel filter
+  useEffect(() => {
+    if (!selectedDealerIds.length || !dealerFilterOptions.length) return;
+    const valid = new Set(dealerFilterOptions.map((o) => o.id));
+    const next = selectedDealerIds.filter((id) => valid.has(id));
+    if (next.length !== selectedDealerIds.length) setSelectedDealerIds(next);
+  }, [dealerFilterOptions, selectedDealerIds]);
+
   const filteredDealerRows = useMemo(() => {
-    if (channelId === 'all') return channelGrid.dealerRows;
-    const idx = channelGrid.columns.indexOf(channelId);
-    if (idx < 0) return channelGrid.dealerRows;
-    return channelGrid.dealerRows.map((row) => ({
-      ...row,
-      cells: row.cells.map((v, i) => (i === idx ? v : 0)),
-      total: row.cells[idx] || 0,
-    }));
-  }, [channelGrid, channelId]);
+    let rows;
+    if (channelId === 'all') {
+      rows = channelGrid.dealerRows;
+    } else {
+      const idx = channelGrid.columns.indexOf(channelId);
+      if (idx < 0) {
+        rows = channelGrid.dealerRows;
+      } else {
+        rows = channelGrid.dealerRows.map((row) => ({
+          ...row,
+          cells: row.cells.map((v, i) => (i === idx ? v : 0)),
+          total: row.cells[idx] || 0,
+        }));
+      }
+    }
+    if (!selectedDealerIdSet) return rows;
+    return rows.filter((row) => selectedDealerIdSet.has(dealerKey(row.dealer)));
+  }, [channelGrid, channelId, selectedDealerIdSet]);
+
+  const onChannelSort = useCallback((key, dir) => {
+    setChannelSort((prev) => {
+      if (dir === 1 || dir === -1) return { k: key, dir };
+      if (prev.k === key) return { k: key, dir: -prev.dir };
+      // Name defaults A→Z; numeric columns default high→low
+      return { k: key, dir: key === 'name' ? 1 : -1 };
+    });
+  }, []);
+
+  const sortedChannelRows = useMemo(() => {
+    const ctx = {
+      channelId,
+      channelGrid,
+      priorByDealer,
+      channelValue,
+    };
+    return [...filteredDealerRows].sort((a, b) => {
+      const av = channelMatrixSortValue(a, channelSort.k, ctx);
+      const bv = channelMatrixSortValue(b, channelSort.k, ctx);
+      if (typeof av === 'string' || typeof bv === 'string') {
+        return String(av).localeCompare(String(bv)) * channelSort.dir;
+      }
+      return (Number(av) - Number(bv)) * channelSort.dir;
+    });
+  }, [
+    filteredDealerRows,
+    channelSort,
+    channelId,
+    channelGrid,
+    priorByDealer,
+    channelValue,
+  ]);
 
   const displayChannels =
     channelId === 'all'
@@ -270,27 +649,36 @@ export default function PortfolioView() {
       : channelGrid.allChannelTotals.filter((c) => c.id === channelId);
 
   const displayAllTotals = useMemo(() => {
-    if (channelId === 'all') {
-      return {
-        channels: channelGrid.allChannelTotals,
-        total: channelGrid.allTotal,
-      };
-    }
-    const one = channelGrid.allChannelTotals.find((c) => c.id === channelId);
-    return {
-      channels: one ? [one] : [],
-      total: one?.total || 0,
-    };
-  }, [channelGrid, channelId]);
+    const channels = displayChannels.map((ch) => {
+      const idx = channelGrid.columns.indexOf(ch.id);
+      let total = 0;
+      for (const row of filteredDealerRows) {
+        total +=
+          channelId === 'all'
+            ? Number(row.cells[idx]) || 0
+            : Number(row.total) || 0;
+      }
+      return { id: ch.id, name: ch.name, color: ch.color, total };
+    });
+    const total = filteredDealerRows.reduce(
+      (s, row) => s + (Number(row.total) || 0),
+      0
+    );
+    return { channels, total };
+  }, [displayChannels, filteredDealerRows, channelGrid.columns, channelId]);
 
   const priorAllTotals = useMemo(() => {
     if (!compareActive) {
       return { channels: [], total: 0 };
     }
+    const priorRows = (priorMatrix.rows || []).filter((row) => {
+      if (!selectedDealerIdSet) return true;
+      return selectedDealerIdSet.has(dealerKey(row.dealer));
+    });
     let total = 0;
     const channels = displayChannels.map((ch) => {
       let sum = 0;
-      for (const row of priorMatrix.rows || []) {
+      for (const row of priorRows) {
         sum += channelValue(row, ch.id);
       }
       total += sum;
@@ -300,7 +688,7 @@ export default function PortfolioView() {
       total = channels[0]?.total || 0;
     } else {
       total = 0;
-      for (const row of priorMatrix.rows || []) {
+      for (const row of priorRows) {
         total += Math.round(Number(row.total) || 0);
       }
     }
@@ -311,6 +699,7 @@ export default function PortfolioView() {
     priorMatrix.rows,
     channelValue,
     channelId,
+    selectedDealerIdSet,
   ]);
 
   const topChannel = useMemo(() => {
@@ -320,6 +709,85 @@ export default function PortfolioView() {
         : displayAllTotals.channels;
     return [...list].sort((a, b) => b.total - a.total)[0];
   }, [channelGrid, channelId, displayAllTotals]);
+
+  const conditionKpi = useMemo(() => {
+    const portfolioIds = new Set(
+      (portfolioDealers || [])
+        .map((d) => String(d.ga4CustomerId || '').trim())
+        .filter(Boolean)
+    );
+
+    const byClient = new Map(); // client_id -> { new, used, unknown }
+    for (const row of conditionTotalsRows) {
+      const id = String(row.client_id || '').trim();
+      if (!id) continue;
+      if (selectedDealerIdSet) {
+        if (!selectedDealerIdSet.has(id)) continue;
+      } else if (portfolioIds.size && !portfolioIds.has(id)) {
+        continue;
+      }
+      if (!byClient.has(id)) {
+        byClient.set(id, { new: 0, used: 0, unknown: 0 });
+      }
+      const bucket = String(row.condition_bucket || '').toLowerCase();
+      const views = Number(row.views) || 0;
+      const slot = byClient.get(id);
+      if (bucket.startsWith('new')) slot.new += views;
+      else if (bucket.startsWith('used')) slot.used += views;
+      else slot.unknown += views;
+    }
+
+    // When a channel is selected, scale each dealer's New/Used/Unknown by that
+    // dealer's share of VDP on the selected channel (matrix), so the KPI stays
+    // in sync with VDP Views without a slow channel join.
+    const channelIdx =
+      channelId === 'all' ? -1 : channelGrid.columns.indexOf(channelId);
+
+    let newTotal = 0;
+    let usedTotal = 0;
+    let unknownTotal = 0;
+
+    if (channelIdx < 0) {
+      for (const slot of byClient.values()) {
+        newTotal += slot.new;
+        usedTotal += slot.used;
+        unknownTotal += slot.unknown;
+      }
+    } else {
+      for (const row of channelGrid.dealerRows || []) {
+        const id = dealerKey(row.dealer);
+        if (!id) continue;
+        if (selectedDealerIdSet && !selectedDealerIdSet.has(id)) continue;
+        const slot = byClient.get(id);
+        if (!slot) continue;
+        const dealerAll = Number(row.total) || 0;
+        const dealerCh = Number(row.cells?.[channelIdx]) || 0;
+        const scale = dealerAll > 0 ? dealerCh / dealerAll : 0;
+        newTotal += slot.new * scale;
+        usedTotal += slot.used * scale;
+        unknownTotal += slot.unknown * scale;
+      }
+      newTotal = Math.round(newTotal);
+      usedTotal = Math.round(usedTotal);
+      unknownTotal = Math.round(unknownTotal);
+    }
+
+    return {
+      newTotal,
+      usedTotal,
+      unknownTotal,
+      combined: newTotal + usedTotal,
+      ready: conditionSplitReady,
+    };
+  }, [
+    conditionTotalsRows,
+    selectedDealerIdSet,
+    portfolioDealers,
+    conditionSplitReady,
+    channelId,
+    channelGrid.columns,
+    channelGrid.dealerRows,
+  ]);
 
   const dealerSummaryRows = useMemo(() => {
     const pageCurMap = indexRowsByDealer(pageCur.rows);
@@ -370,21 +838,69 @@ export default function PortfolioView() {
       return (av - bv) * sort.dir;
     });
 
-    return rows;
-  }, [pageCur, pagePri, vdpCur, vdpPri, channelId, sort]);
+    if (!selectedDealerIdSet) return rows;
+    return rows.filter((r) => selectedDealerIdSet.has(r.id));
+  }, [pageCur, pagePri, vdpCur, vdpPri, channelId, sort, selectedDealerIdSet]);
 
-  const lineData = useMemo(() => {
+  const singleDealerId =
+    selectedDealerIds.length === 1 ? selectedDealerIds[0] : null;
+  const singleDealerRow = useMemo(() => {
+    if (!singleDealerId) return null;
+    return (
+      filteredDealerRows.find((r) => dealerKey(r.dealer) === singleDealerId) ||
+      null
+    );
+  }, [filteredDealerRows, singleDealerId]);
+
+  /** Graph only: 1 dealer → bar views by channel; else line by dealer (incl. channel filter). */
+  const chartMode = singleDealerId ? 'channel-bar' : 'dealer-line';
+
+  const chartData = useMemo(() => {
+    if (chartMode === 'channel-bar' && singleDealerRow) {
+      const labels = channelGrid.columns || [];
+      const curVals = labels.map((_, i) => Number(singleDealerRow.cells[i]) || 0);
+      const priorRaw = priorByDealer.get(dealerKey(singleDealerRow.dealer));
+      const priorVals = labels.map((name) => channelValue(priorRaw, name));
+
+      const datasets = [
+        {
+          label: curLabel,
+          data: curVals,
+          backgroundColor: '#2563eb',
+          borderColor: '#2563eb',
+          borderRadius: 4,
+          maxBarThickness: 42,
+        },
+      ];
+
+      if (compareActive) {
+        datasets.push({
+          label: priLabel,
+          data: priorVals,
+          backgroundColor: '#94a3b8',
+          borderColor: '#94a3b8',
+          borderRadius: 4,
+          maxBarThickness: 42,
+        });
+      }
+
+      return { labels, datasets };
+    }
+
     const ordered = [...filteredDealerRows]
       .filter((r) => !r.error)
       .sort((a, b) => b.total - a.total);
 
-    const priorRows = metric === 'vdp' ? vdpPri.rows : pagePri.rows;
-    const priorMap = indexRowsByDealer(priorRows);
+    const labels = ordered.map((r) => r.dealer?.name || 'Dealer');
+    const curVals = ordered.map((r) => r.total);
+    const priorVals = ordered.map((r) =>
+      totalForRow(priorByDealer.get(dealerKey(r.dealer)), channelId)
+    );
 
     const datasets = [
       {
         label: curLabel,
-        data: ordered.map((r) => r.total),
+        data: curVals,
         borderColor: '#2563eb',
         backgroundColor: 'rgba(37,99,235,.08)',
         fill: !compareActive,
@@ -400,9 +916,7 @@ export default function PortfolioView() {
     if (compareActive) {
       datasets.push({
         label: priLabel,
-        data: ordered.map((r) =>
-          totalForRow(priorMap.get(dealerKey(r.dealer)), channelId)
-        ),
+        data: priorVals,
         borderColor: '#94a3b8',
         backgroundColor: 'transparent',
         borderDash: [5, 4],
@@ -416,22 +930,21 @@ export default function PortfolioView() {
       });
     }
 
-    return {
-      labels: ordered.map((r) => r.dealer?.name || 'Dealer'),
-      datasets,
-    };
+    return { labels, datasets };
   }, [
+    chartMode,
+    singleDealerRow,
+    channelGrid.columns,
     filteredDealerRows,
     curLabel,
     priLabel,
     compareActive,
-    metric,
-    vdpPri.rows,
-    pagePri.rows,
     channelId,
+    priorByDealer,
+    channelValue,
   ]);
 
-  const lineOptions = useMemo(
+  const chartOptions = useMemo(
     () => ({
       plugins: {
         legend: {
@@ -441,8 +954,7 @@ export default function PortfolioView() {
         },
         tooltip: {
           callbacks: {
-            label: (ctx) =>
-              `${ctx.dataset.label}: ${fmt(ctx.parsed.y)}`,
+            label: (ctx) => `${ctx.dataset.label}: ${fmt(ctx.parsed.y)}`,
           },
         },
       },
@@ -458,6 +970,7 @@ export default function PortfolioView() {
           grid: { display: false },
         },
         y: {
+          beginAtZero: true,
           ticks: { callback: (v) => fmt(v), color: '#64748b' },
           grid: { color: 'rgba(148, 163, 184, 0.25)' },
         },
@@ -466,10 +979,32 @@ export default function PortfolioView() {
     []
   );
 
-  const lineChartWidth = Math.max(
+  const chartWidth = Math.max(
     720,
-    (lineData.labels?.length || 0) * (compareActive ? 72 : 56)
+    (chartData.labels?.length || 0) *
+      (chartMode === 'channel-bar'
+        ? compareActive
+          ? 72
+          : 64
+        : compareActive
+          ? 72
+          : 56)
   );
+
+  const chartTitle =
+    chartMode === 'channel-bar'
+      ? `${metricLabel} by Channel — ${
+          singleDealerRow?.dealer?.name || 'Dealer'
+        } · ${filterScopeLabel}`
+      : `${metricLabel} by Dealer — ${filterScopeLabel}`;
+
+  const chartSub = compareActive
+    ? chartMode === 'channel-bar'
+      ? `${curLabel} vs ${priLabel} (${compareModeLabel}) · bar by channel for selected dealer`
+      : `${curLabel} vs ${priLabel} (${compareModeLabel}) · filtered to ${filterScopeLabel} · scroll horizontally for all dealers`
+    : chartMode === 'channel-bar'
+      ? `${curLabel} · bar by channel for selected dealer`
+      : `${curLabel} · filtered to ${filterScopeLabel} · scroll horizontally for all dealers`;
 
   const openDealer = (dealer) => {
     if (dealer) pickClient(dealer);
@@ -481,7 +1016,7 @@ export default function PortfolioView() {
   const onSort = (k) => {
     setSort((prev) => ({
       k,
-      dir: prev.k === k ? -prev.dir : -1,
+      dir: prev.k === k ? -prev.dir : k === 'name' ? 1 : -1,
     }));
   };
 
@@ -491,87 +1026,85 @@ export default function PortfolioView() {
     : isBusy
       ? 0
       : null;
-  const channelFixedScrollRef = useRef(null);
-  const channelScrollRef = useRef(null);
-  const syncingScrollRef = useRef(false);
-
   const CHANNEL_COL_W = compareActive ? 110 : 150;
-  const DEALER_COL_W = 180;
-  const TOTAL_COL_W = 88;
+  const DEALER_COL_W = 200;
+  const TOTAL_COL_W = compareActive ? 112 : 100;
+  const freezeCols = compareActive ? 2 : 1;
   const channelValueCols = displayChannels.length * (compareActive ? 2 : 1);
-  const channelTableWidth = Math.max(channelValueCols * CHANNEL_COL_W, 320);
-  const freezeTableWidth =
-    DEALER_COL_W + (compareActive ? TOTAL_COL_W * 2 : TOTAL_COL_W);
-
-  /** Vertical sync only — freeze columns never move horizontally. */
-  const syncChannelScroll = useCallback(() => {
-    if (syncingScrollRef.current) return;
-    const fixed = channelFixedScrollRef.current;
-    const scroll = channelScrollRef.current;
-    if (!fixed || !scroll) return;
-    syncingScrollRef.current = true;
-    fixed.scrollTop = scroll.scrollTop;
-    requestAnimationFrame(() => {
-      syncingScrollRef.current = false;
-    });
-  }, []);
-
-  const onFixedWheel = useCallback((e) => {
-    const scroll = channelScrollRef.current;
-    if (!scroll) return;
-    scroll.scrollTop += e.deltaY;
-    e.preventDefault();
-  }, []);
+  const tableMinWidth =
+    DEALER_COL_W +
+    TOTAL_COL_W * freezeCols +
+    Math.max(channelValueCols, 1) * CHANNEL_COL_W;
 
   const periodSub = compareActive
-    ? `${metricLabel} · ${curLabel} vs ${priLabel} (${compareModeLabel}) — click a dealer to open it.`
-    : `${metricLabel}, ${curLabel} — click a dealer to open it.`;
+    ? `${metricLabel} · ${curLabel} vs ${priLabel} (${compareModeLabel}) · filtered to ${filterScopeLabel} — click a dealer to open it.`
+    : `${metricLabel}, ${curLabel} · filtered to ${filterScopeLabel} — click a dealer to open it.`;
 
   return (
     <div className={`vdp-view${isBusy ? ' vdp-view--card-loading' : ''}`}>
       <VdpLoadingCard active={isBusy} percent={loadPercent} />
       <Toolbar>
         <ToolbarGroup label="Metric">
-          <Seg value={metric} options={METRIC_OPTS} onChange={setMetric} />
+          <Seg
+            value={metric}
+            options={METRIC_OPTS}
+            onChange={(next) => {
+              setMetric(next);
+              setSort({ k: 'name', dir: 1 });
+              setChannelSort({ k: 'name', dir: 1 });
+            }}
+          />
         </ToolbarGroup>
-        <ToolbarGroup label="Compare">
+        <div className="vdp-toolbar-spacer" aria-hidden="true" />
+        <ToolbarGroup>
+          <DealerMultiFilter
+            options={dealerFilterOptions}
+            selectedIds={selectedDealerIds}
+            onChange={setSelectedDealerIds}
+            disabled={isBusy || !dealerFilterOptions.length}
+            showLabel={false}
+          />
+        </ToolbarGroup>
+        <ToolbarGroup>
           <Seg
             value={compareMode}
             options={VDP_COMPARE_MODES}
             onChange={toggleCompareMode}
           />
         </ToolbarGroup>
-        <ToolbarGroup label="Channel">
-          <select
-            className="vdp-select"
+        <ToolbarGroup>
+          <ChannelDropdown
             value={channelId}
-            onChange={(e) => setChannelId(e.target.value)}
+            options={channelOptions}
+            onChange={setChannelId}
             disabled={isBusy && !channelOptions.length}
-          >
-            <option value="all">All Channels</option>
-            {channelOptions.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
+          />
         </ToolbarGroup>
       </Toolbar>
 
-      <div className="vdp-kpi-grid">
+      <div className="vdp-kpi-grid" style={{ gridTemplateColumns: 'repeat(5, minmax(0, 1fr))' }}>
         <Kpi
           label="Dealers Tracked"
           value={filteredDealerRows.length}
           sub={
             dealerCategoryFilter
-              ? `${channelLabel} · ${dealerCategoryFilter}`
-              : channelLabel
+              ? `${filterScopeLabel} · ${dealerCategoryFilter}`
+              : filterScopeLabel
           }
         />
         <Kpi
           label={`${metricLabel} · ${curLabel}`}
           value={fmt(displayAllTotals.total)}
-          sub={channelLabel}
+          sub={filterScopeLabel}
+        />
+        <Kpi
+          label={`New + Used · ${curLabel}`}
+          value={conditionKpi.ready ? fmt(conditionKpi.combined) : '…'}
+          sub={
+            conditionKpi.ready
+              ? `New ${fmt(conditionKpi.newTotal)} · Used ${fmt(conditionKpi.usedTotal)} · Unknown ${fmt(conditionKpi.unknownTotal)}`
+              : 'Loading condition split…'
+          }
         />
         <Kpi
           label={`Top Channel · ${curLabel}`}
@@ -605,28 +1138,26 @@ export default function PortfolioView() {
       )}
 
       <Card
-        title={`${metricLabel} by Dealer — ${channelLabel}`}
-        sub={
-          compareActive
-            ? `${curLabel} vs ${priLabel} (${compareModeLabel}) · scroll horizontally for all dealers`
-            : `${curLabel} · scroll horizontally for all dealers`
-        }
+        title={chartTitle}
+        sub={chartSub}
         style={{ marginBottom: 16 }}
       >
-        {!(lineData.labels || []).length ? (
+        {!(chartData.labels || []).length ? (
           <div style={{ color: 'var(--vdp-muted)', fontSize: 13, padding: 12 }}>
-            No dealer data for this period.
+            {chartMode === 'channel-bar'
+              ? 'No channel data for this dealer.'
+              : 'No dealer data for this period.'}
           </div>
         ) : (
           <div className="vdp-chart-scroll">
             <div
               className="vdp-chart-scroll-inner"
-              style={{ width: lineChartWidth, minWidth: '100%' }}
+              style={{ width: chartWidth, minWidth: '100%' }}
             >
               <VdpChart
-                type="line"
-                data={lineData}
-                options={lineOptions}
+                type={chartMode === 'channel-bar' ? 'bar' : 'line'}
+                data={chartData}
+                options={chartOptions}
                 fill
                 height={280}
               />
@@ -636,7 +1167,7 @@ export default function PortfolioView() {
       </Card>
 
       <Card
-        title="Channel Breakdown by Dealer"
+        title={`Channel Breakdown by Dealer — ${filterScopeLabel}`}
         sub={periodSub}
         style={{ marginBottom: 16 }}
       >
@@ -649,289 +1180,273 @@ export default function PortfolioView() {
           </div>
         ) : (
           <>
-            <div className="vdp-split-table">
-              {/* Freeze: Dealer + Total — never scrolls horizontally */}
-              <div
-                className="vdp-split-table__freeze"
-                style={{ width: freezeTableWidth }}
+            <div
+              className={`vdp-channel-matrix vdp-table-scroll--10${
+                compareActive ? ' vdp-channel-matrix--compare' : ''
+              }`}
+              style={{
+                ['--freeze-dealer-w']: `${DEALER_COL_W}px`,
+                ['--freeze-total-w']: `${TOTAL_COL_W}px`,
+                ['--matrix-table-w']: `${tableMinWidth}px`,
+              }}
+            >
+              <table
+                className={`vdp-table vdp-table--channel-matrix${
+                  compareActive ? ' vdp-table--channel-compare' : ''
+                }`}
               >
-                <div
-                  ref={channelFixedScrollRef}
-                  className="vdp-split-table__freeze-y vdp-table-scroll--10"
-                  onWheel={onFixedWheel}
-                >
-                  <table
-                    className={`vdp-table vdp-table--fixed-total${compareActive ? ' vdp-table--channel-compare' : ''}`}
-                    style={{
-                      width: freezeTableWidth,
-                      tableLayout: 'fixed',
-                    }}
-                  >
-                    <colgroup>
-                      <col style={{ width: DEALER_COL_W }} />
-                      {compareActive ? (
-                        <>
-                          <col style={{ width: TOTAL_COL_W }} />
-                          <col style={{ width: TOTAL_COL_W }} />
-                        </>
-                      ) : (
-                        <col style={{ width: TOTAL_COL_W }} />
-                      )}
-                    </colgroup>
-                    <thead>
-                      {compareActive ? (
-                        <>
-                          <tr>
-                            <th rowSpan={2}>Dealer</th>
-                            <th colSpan={2} className="vdp-th-group vdp-th-pair-end">
-                              Total
-                            </th>
-                          </tr>
-                          <tr>
-                            <th className="vdp-th-sub col-cur">Current</th>
-                            <th className="vdp-th-sub col-prev vdp-th-pair-end">Prior</th>
-                          </tr>
-                        </>
-                      ) : (
-                        <tr>
-                          <th>Dealer</th>
-                          <th className="right">Total</th>
-                        </tr>
-                      )}
-                    </thead>
-                    <tbody>
-                      {filteredDealerRows.map(({ dealer, total, error: rowError }) => {
-                        const priorRow = priorByDealer.get(dealerKey(dealer));
-                        const priorTotal =
-                          channelId === 'all'
-                            ? Math.round(Number(priorRow?.total) || 0)
-                            : channelValue(priorRow, channelId);
-                        return (
-                          <tr
-                            key={dealer?.id || dealer?.ga4CustomerId || dealer?.name}
-                            className="vdp-row-click"
-                            onClick={() => openDealer(dealer)}
-                          >
-                            <td className="vdp-dealer-name">
-                              {dealer?.name || 'Unnamed'}
-                              {dealer?.dealerCategory ? (
-                                <span className="vdp-vert-tag">
-                                  {dealer.dealerCategory}
-                                </span>
-                              ) : null}
-                              {rowError ? (
-                                <span className="vdp-vert-tag" style={{ color: '#dc2626' }}>
-                                  {rowError}
-                                </span>
-                              ) : null}
-                            </td>
-                            {compareActive ? (
-                              <>
-                                <td className="right mono col-cur" style={{ fontWeight: 700 }}>
-                                  {fmt(total)}
-                                </td>
-                                <td className="right mono col-prev" style={{ fontWeight: 700 }}>
-                                  {fmt(priorTotal)}
-                                </td>
-                              </>
-                            ) : (
-                              <td className="right mono" style={{ fontWeight: 700 }}>
-                                {fmt(total)}
-                              </td>
-                            )}
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-                <div className="vdp-split-table__freeze-foot">
-                  <table
-                    className={`vdp-table vdp-table--fixed-total${compareActive ? ' vdp-table--channel-compare' : ''}`}
-                    style={{
-                      width: freezeTableWidth,
-                      tableLayout: 'fixed',
-                    }}
-                  >
-                    <colgroup>
-                      <col style={{ width: DEALER_COL_W }} />
-                      {compareActive ? (
-                        <>
-                          <col style={{ width: TOTAL_COL_W }} />
-                          <col style={{ width: TOTAL_COL_W }} />
-                        </>
-                      ) : (
-                        <col style={{ width: TOTAL_COL_W }} />
-                      )}
-                    </colgroup>
-                    <tbody>
+                <colgroup>
+                  <col className="vdp-col-dealer" style={{ width: DEALER_COL_W }} />
+                  {compareActive ? (
+                    <>
+                      <col className="vdp-col-total" style={{ width: TOTAL_COL_W }} />
+                      <col className="vdp-col-total" style={{ width: TOTAL_COL_W }} />
+                    </>
+                  ) : (
+                    <col className="vdp-col-total" style={{ width: TOTAL_COL_W }} />
+                  )}
+                  {Array.from({ length: channelValueCols }).map((_, i) => (
+                    <col key={i} style={{ width: CHANNEL_COL_W }} />
+                  ))}
+                </colgroup>
+                <thead>
+                  {compareActive ? (
+                    <>
                       <tr>
-                        <td>All Dealers</td>
-                        {compareActive ? (
-                          <>
-                            <td className="right mono col-cur">{fmt(displayAllTotals.total)}</td>
-                            <td className="right mono col-prev">{fmt(priorAllTotals.total)}</td>
-                          </>
-                        ) : (
-                          <td className="right mono">{fmt(displayAllTotals.total)}</td>
-                        )}
+                        <SortableTh
+                          className="vdp-sticky-col vdp-sticky-col--0"
+                          rowSpan={2}
+                          sortKey="name"
+                          channelSort={channelSort}
+                          onChannelSort={onChannelSort}
+                        >
+                          Dealer
+                        </SortableTh>
+                        <th
+                          className="vdp-th-group vdp-th-pair-end vdp-sticky-col vdp-sticky-col--total-head"
+                          colSpan={2}
+                        >
+                          Total
+                        </th>
+                        {displayChannels.map((ch) => (
+                          <th
+                            key={ch.id}
+                            colSpan={2}
+                            className="vdp-th-group vdp-th-pair-end"
+                          >
+                            <span
+                              className="vdp-legend-swatch"
+                              style={{ background: ch.color }}
+                            />
+                            {ch.name}
+                          </th>
+                        ))}
                       </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* Channels: horizontal scroll wraps body + total (scrollbar under total) */}
-              <div className="vdp-split-table__channels">
-                <div
-                  className="vdp-split-table__channels-inner"
-                  style={{ width: channelTableWidth }}
-                >
-                  <div
-                    ref={channelScrollRef}
-                    className="vdp-split-table__channels-y vdp-table-scroll--10"
-                    onScroll={syncChannelScroll}
-                  >
-                    <table
-                      className={`vdp-table${compareActive ? ' vdp-table--channel-compare' : ''}`}
-                      style={{
-                        width: channelTableWidth,
-                        tableLayout: 'fixed',
-                      }}
-                    >
-                      <colgroup>
-                        {Array.from({ length: channelValueCols }).map((_, i) => (
-                          <col key={i} style={{ width: CHANNEL_COL_W }} />
+                      <tr>
+                        <SortableTh
+                          className="vdp-th-sub col-cur vdp-sticky-col vdp-sticky-col--1"
+                          sortKey="total"
+                          channelSort={channelSort}
+                          onChannelSort={onChannelSort}
+                        >
+                          Current
+                        </SortableTh>
+                        <SortableTh
+                          className="vdp-th-sub col-prev vdp-th-pair-end vdp-sticky-col vdp-sticky-col--2"
+                          sortKey="totalPri"
+                          channelSort={channelSort}
+                          onChannelSort={onChannelSort}
+                        >
+                          Prior
+                        </SortableTh>
+                        {displayChannels.map((ch) => (
+                          <Fragment key={ch.id}>
+                            <SortableTh
+                              className="vdp-th-sub col-cur"
+                              sortKey={`ch:${ch.id}`}
+                              channelSort={channelSort}
+                              onChannelSort={onChannelSort}
+                            >
+                              Current
+                            </SortableTh>
+                            <SortableTh
+                              className="vdp-th-sub col-prev vdp-th-pair-end"
+                              sortKey={`chPri:${ch.id}`}
+                              channelSort={channelSort}
+                              onChannelSort={onChannelSort}
+                            >
+                              Prior
+                            </SortableTh>
+                          </Fragment>
                         ))}
-                      </colgroup>
-                      <thead>
+                      </tr>
+                    </>
+                  ) : (
+                    <tr>
+                      <SortableTh
+                        className="vdp-sticky-col vdp-sticky-col--0"
+                        sortKey="name"
+                        channelSort={channelSort}
+                        onChannelSort={onChannelSort}
+                      >
+                        Dealer
+                      </SortableTh>
+                      <SortableTh
+                        className="right vdp-sticky-col vdp-sticky-col--1"
+                        sortKey="total"
+                        channelSort={channelSort}
+                        onChannelSort={onChannelSort}
+                      >
+                        Total
+                      </SortableTh>
+                      {displayChannels.map((ch) => (
+                        <SortableTh
+                          key={ch.id}
+                          className="right"
+                          sortKey={`ch:${ch.id}`}
+                          channelSort={channelSort}
+                          onChannelSort={onChannelSort}
+                        >
+                          <span
+                            className="vdp-legend-swatch"
+                            style={{ background: ch.color }}
+                          />
+                          {ch.name}
+                        </SortableTh>
+                      ))}
+                    </tr>
+                  )}
+                </thead>
+                <tbody>
+                  {sortedChannelRows.map(({ dealer, cells, total, error: rowError }) => {
+                    const shownCells =
+                      channelId === 'all'
+                        ? cells
+                        : [cells[channelGrid.columns.indexOf(channelId)] || 0];
+                    const priorRow = priorByDealer.get(dealerKey(dealer));
+                    const priorTotal =
+                      channelId === 'all'
+                        ? Math.round(Number(priorRow?.total) || 0)
+                        : channelValue(priorRow, channelId);
+                    return (
+                      <tr
+                        key={dealer?.id || dealer?.ga4CustomerId || dealer?.name}
+                        className="vdp-row-click"
+                        onClick={() => openDealer(dealer)}
+                      >
+                        <td className="vdp-dealer-name vdp-sticky-col vdp-sticky-col--0">
+                          {dealer?.name || 'Unnamed'}
+                          {dealer?.dealerCategory ? (
+                            <span className="vdp-vert-tag">
+                              {dealer.dealerCategory}
+                            </span>
+                          ) : null}
+                          {rowError ? (
+                            <span className="vdp-vert-tag" style={{ color: '#dc2626' }}>
+                              {rowError}
+                            </span>
+                          ) : null}
+                        </td>
                         {compareActive ? (
                           <>
-                            <tr>
-                              {displayChannels.map((ch) => (
-                                <th
-                                  key={ch.id}
-                                  colSpan={2}
-                                  className="vdp-th-group vdp-th-pair-end"
-                                >
-                                  <span
-                                    className="vdp-legend-swatch"
-                                    style={{ background: ch.color }}
-                                  />
-                                  {ch.name}
-                                </th>
-                              ))}
-                            </tr>
-                            <tr>
-                              {displayChannels.map((ch) => (
-                                <Fragment key={ch.id}>
-                                  <th className="vdp-th-sub col-cur">Current</th>
-                                  <th className="vdp-th-sub col-prev vdp-th-pair-end">
-                                    Prior
-                                  </th>
-                                </Fragment>
-                              ))}
-                            </tr>
+                            <td
+                              className="right mono col-cur vdp-sticky-col vdp-sticky-col--1"
+                              style={{ fontWeight: 700 }}
+                            >
+                              {fmt(total)}
+                            </td>
+                            <td
+                              className="right mono col-prev vdp-sticky-col vdp-sticky-col--2"
+                              style={{ fontWeight: 700 }}
+                            >
+                              {fmt(priorTotal)}
+                            </td>
                           </>
                         ) : (
-                          <tr>
-                            {displayChannels.map((ch) => (
-                              <th key={ch.id} className="right">
-                                <span
-                                  className="vdp-legend-swatch"
-                                  style={{ background: ch.color }}
-                                />
-                                {ch.name}
-                              </th>
-                            ))}
-                          </tr>
+                          <td
+                            className="right mono vdp-sticky-col vdp-sticky-col--1"
+                            style={{ fontWeight: 700 }}
+                          >
+                            {fmt(total)}
+                          </td>
                         )}
-                      </thead>
-                      <tbody>
-                        {filteredDealerRows.map(({ dealer, cells }) => {
-                          const shownCells =
-                            channelId === 'all'
-                              ? cells
-                              : [cells[channelGrid.columns.indexOf(channelId)] || 0];
-                          const priorRow = priorByDealer.get(dealerKey(dealer));
-                          return (
-                            <tr
-                              key={dealer?.id || dealer?.ga4CustomerId || dealer?.name}
-                              className="vdp-row-click"
-                              onClick={() => openDealer(dealer)}
-                            >
-                              {compareActive
-                                ? displayChannels.map((ch) => {
-                                    const curIdx = channelGrid.columns.indexOf(ch.id);
-                                    const curVal =
-                                      channelId === 'all'
-                                        ? cells[curIdx] || 0
-                                        : shownCells[0] || 0;
-                                    const priVal = channelValue(priorRow, ch.id);
-                                    return (
-                                      <Fragment key={ch.id}>
-                                        <td className="right mono col-cur">
-                                          {fmt(curVal)}
-                                        </td>
-                                        <td className="right mono col-prev">
-                                          {fmt(priVal)}
-                                        </td>
-                                      </Fragment>
-                                    );
-                                  })
-                                : shownCells.map((v, i) => (
-                                    <td key={i} className="right mono">
-                                      {fmt(v)}
-                                    </td>
-                                  ))}
-                            </tr>
+                        {compareActive
+                          ? displayChannels.map((ch) => {
+                              const curIdx = channelGrid.columns.indexOf(ch.id);
+                              const curVal =
+                                channelId === 'all'
+                                  ? cells[curIdx] || 0
+                                  : shownCells[0] || 0;
+                              const priVal = channelValue(priorRow, ch.id);
+                              return (
+                                <Fragment key={ch.id}>
+                                  <td className="right mono col-cur">
+                                    {fmt(curVal)}
+                                  </td>
+                                  <td className="right mono col-prev">
+                                    {fmt(priVal)}
+                                  </td>
+                                </Fragment>
+                              );
+                            })
+                          : shownCells.map((v, i) => (
+                              <td key={i} className="right mono">
+                                {fmt(v)}
+                              </td>
+                            ))}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td className="vdp-sticky-col vdp-sticky-col--0">
+                      {selectedDealerIdSet ? 'Selected dealers' : 'All Dealers'}
+                    </td>
+                    {compareActive ? (
+                      <>
+                        <td
+                          className="right mono col-cur vdp-sticky-col vdp-sticky-col--1"
+                        >
+                          {fmt(displayAllTotals.total)}
+                        </td>
+                        <td
+                          className="right mono col-prev vdp-sticky-col vdp-sticky-col--2"
+                        >
+                          {fmt(priorAllTotals.total)}
+                        </td>
+                      </>
+                    ) : (
+                      <td
+                        className="right mono vdp-sticky-col vdp-sticky-col--1"
+                      >
+                        {fmt(displayAllTotals.total)}
+                      </td>
+                    )}
+                    {compareActive
+                      ? displayAllTotals.channels.map((ct) => {
+                          const pri = priorAllTotals.channels.find(
+                            (c) => c.id === ct.id
                           );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                  <div className="vdp-split-table__channels-foot">
-                    <table
-                      className={`vdp-table${compareActive ? ' vdp-table--channel-compare' : ''}`}
-                      style={{
-                        width: channelTableWidth,
-                        tableLayout: 'fixed',
-                      }}
-                    >
-                      <colgroup>
-                        {Array.from({ length: channelValueCols }).map((_, i) => (
-                          <col key={i} style={{ width: CHANNEL_COL_W }} />
+                          return (
+                            <Fragment key={ct.id}>
+                              <td className="right mono col-cur">
+                                {fmt(ct.total)}
+                              </td>
+                              <td className="right mono col-prev">
+                                {fmt(pri?.total || 0)}
+                              </td>
+                            </Fragment>
+                          );
+                        })
+                      : displayAllTotals.channels.map((ct) => (
+                          <td key={ct.id} className="right mono">
+                            {fmt(ct.total)}
+                          </td>
                         ))}
-                      </colgroup>
-                      <tbody>
-                        <tr>
-                          {compareActive
-                            ? displayAllTotals.channels.map((ct) => {
-                                const pri = priorAllTotals.channels.find(
-                                  (c) => c.id === ct.id
-                                );
-                                return (
-                                  <Fragment key={ct.id}>
-                                    <td className="right mono col-cur">
-                                      {fmt(ct.total)}
-                                    </td>
-                                    <td className="right mono col-prev">
-                                      {fmt(pri?.total || 0)}
-                                    </td>
-                                  </Fragment>
-                                );
-                              })
-                            : displayAllTotals.channels.map((ct) => (
-                                <td key={ct.id} className="right mono">
-                                  {fmt(ct.total)}
-                                </td>
-                              ))}
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
+                  </tr>
+                </tfoot>
+              </table>
             </div>
             {filteredDealerRows.length > 10 && (
               <div className="vdp-scroll-hint">
@@ -945,7 +1460,7 @@ export default function PortfolioView() {
       <Card
         title={
           <>
-            All Dealers{' '}
+            All Dealers — {filterScopeLabel}{' '}
             <span style={{ color: 'var(--vdp-muted)', fontWeight: 400, fontSize: 12 }}>
               — click a row to open that dealer
             </span>
@@ -953,8 +1468,8 @@ export default function PortfolioView() {
         }
         sub={
           compareActive
-            ? `Comparing ${curLabel} to ${priLabel} (${compareModeLabel}), filtered to ${channelLabel}`
-            : `${curLabel} · select MoM or PoP to compare · filtered to ${channelLabel}`
+            ? `Comparing ${curLabel} to ${priLabel} (${compareModeLabel}) · filtered to ${filterScopeLabel}`
+            : `${curLabel} · select MoM or PoP to compare · filtered to ${filterScopeLabel}`
         }
       >
         {!dealerSummaryRows.length ? (
@@ -968,25 +1483,35 @@ export default function PortfolioView() {
                 <thead>
                   <tr>
                     {(
-                      compareActive
-                        ? [
-                            ['name', 'Dealer'],
-                            ['vertical', 'Vertical'],
-                            ['pv1', 'Page Views (Current)'],
-                            ['pv0', 'Page Views (Prior)'],
-                            ['pvmom', comparePctLabel],
-                            ['vdp1', 'VDP Views (Current)'],
-                            ['vdp0', 'VDP Views (Prior)'],
-                            ['vdpmom', comparePctLabel],
-                            ['rate', 'VDP Rate'],
-                          ]
-                        : [
-                            ['name', 'Dealer'],
-                            ['vertical', 'Vertical'],
-                            ['pv1', 'Page Views'],
-                            ['vdp1', 'VDP Views'],
-                            ['rate', 'VDP Rate'],
-                          ]
+                      metric === 'page'
+                        ? compareActive
+                          ? [
+                              ['name', 'Dealer'],
+                              // ['vertical', 'Vertical'],
+                              ['pv1', 'Page Views (Current)'],
+                              ['pv0', 'Page Views (Prior)'],
+                              ['pvmom', comparePctLabel],
+                            ]
+                          : [
+                              ['name', 'Dealer'],
+                              // ['vertical', 'Vertical'],
+                              ['pv1', 'Page Views'],
+                            ]
+                        : compareActive
+                          ? [
+                              ['name', 'Dealer'],
+                              // ['vertical', 'Vertical'],
+                              ['vdp1', 'VDP Views (Current)'],
+                              ['vdp0', 'VDP Views (Prior)'],
+                              ['vdpmom', comparePctLabel],
+                              ['rate', 'VDP Rate'],
+                            ]
+                          : [
+                              ['name', 'Dealer'],
+                              // ['vertical', 'Vertical'],
+                              ['vdp1', 'VDP Views'],
+                              ['rate', 'VDP Rate'],
+                            ]
                     ).map(([k, label]) => (
                       <th
                         key={k}
@@ -1013,26 +1538,33 @@ export default function PortfolioView() {
                           </span>
                         ) : null}
                       </td>
-                      <td>{r.vertical}</td>
-                      <td className="right mono">{fmt(r.pv1)}</td>
-                      {compareActive && (
+                      {/* <td>{r.vertical}</td> */}
+                      {metric === 'page' ? (
                         <>
-                          <td className="right mono">{fmt(r.pv0)}</td>
-                          <td className={`right vdp-delta ${momClass(r.pvmom / 100)}`}>
-                            {r.pv0 < 1 ? '—' : pct(r.pvmom)}
-                          </td>
+                          <td className="right mono">{fmt(r.pv1)}</td>
+                          {compareActive && (
+                            <>
+                              <td className="right mono">{fmt(r.pv0)}</td>
+                              <td className={`right vdp-delta ${momClass(r.pvmom / 100)}`}>
+                                {r.pv0 < 1 ? '—' : pct(r.pvmom)}
+                              </td>
+                            </>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <td className="right mono">{fmt(r.vdp1)}</td>
+                          {compareActive && (
+                            <>
+                              <td className="right mono">{fmt(r.vdp0)}</td>
+                              <td className={`right vdp-delta ${momClass(r.vdpmom / 100)}`}>
+                                {r.vdp0 < 1 ? '—' : pct(r.vdpmom)}
+                              </td>
+                            </>
+                          )}
+                          <td className="right mono">{r.rate.toFixed(1)}%</td>
                         </>
                       )}
-                      <td className="right mono">{fmt(r.vdp1)}</td>
-                      {compareActive && (
-                        <>
-                          <td className="right mono">{fmt(r.vdp0)}</td>
-                          <td className={`right vdp-delta ${momClass(r.vdpmom / 100)}`}>
-                            {r.vdp0 < 1 ? '—' : pct(r.vdpmom)}
-                          </td>
-                        </>
-                      )}
-                      <td className="right mono">{r.rate.toFixed(1)}%</td>
                     </tr>
                   ))}
                 </tbody>

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchChannelBreakdown } from '@/lib/api/dashboardApi';
 import { colorForChannel } from '@/lib/ga4/channelDisplay';
 import {
+  formatRangeLabel,
   mergeChannelComparison,
   periodMonthLabel,
   previousMonthAlignedRange,
@@ -11,10 +12,26 @@ import {
 import Delta from '@/components/dashboard/Delta';
 
 /**
- * VDP Views by Channel — always Current + Prior + MoM.
- * Independent of the Overview Compare period toggle.
+ * Views by Channel — Current + Prior + PoP/MoM %.
+ * Pass priorFrom/priorTo from Overview compare mode (PoP/MoM); falls back to
+ * prior-month-aligned when omitted.
+ * metric: 'vdp' | 'page'
  */
-export default function VdpChannelCmpTable({ clientId, from, to }) {
+export default function VdpChannelCmpTable({
+  clientId,
+  from,
+  to,
+  priorFrom: priorFromProp,
+  priorTo: priorToProp,
+  compareMode = null,
+  metric = 'vdp',
+}) {
+  const isVdp = metric !== 'page';
+  const metricTitle = isVdp ? 'VDP Views' : 'Page Views';
+  const totalLabel = isVdp ? 'Total VDP' : 'Total Page Views';
+  const pageTypeFilter = isVdp ? 'VDP' : 'ALL';
+  const tab = isVdp ? 'vdp' : 'all';
+
   const [curRows, setCurRows] = useState([]);
   const [cmpRows, setCmpRows] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -24,19 +41,30 @@ export default function VdpChannelCmpTable({ clientId, from, to }) {
   const loadGenRef = useRef(0);
 
   const { priorFrom, priorTo } = useMemo(() => {
+    if (priorFromProp && priorToProp) {
+      return { priorFrom: priorFromProp, priorTo: priorToProp };
+    }
     const aligned = previousMonthAlignedRange(from, to);
     return {
       priorFrom: aligned.compareFrom || null,
       priorTo: aligned.compareTo || null,
     };
-  }, [from, to]);
+  }, [from, to, priorFromProp, priorToProp]);
+
+  const deltaLabel = compareMode === 'pop' ? 'PoP' : 'MoM';
 
   const currentPeriodLabel = useMemo(
-    () => periodMonthLabel(from, to) || 'Current',
+    () =>
+      formatRangeLabel(from, to) ||
+      periodMonthLabel(from, to) ||
+      'Current',
     [from, to]
   );
   const comparePeriodLabel = useMemo(
-    () => periodMonthLabel(priorFrom, priorTo) || 'Prior',
+    () =>
+      formatRangeLabel(priorFrom, priorTo) ||
+      periodMonthLabel(priorFrom, priorTo) ||
+      'Prior',
     [priorFrom, priorTo]
   );
 
@@ -61,16 +89,16 @@ export default function VdpChannelCmpTable({ clientId, from, to }) {
           clientId,
           from,
           to,
-          pageTypeFilter: 'VDP',
-          tab: 'vdp',
+          pageTypeFilter,
+          tab,
           onCancelCheck: () => isStale(),
         }),
         fetchChannelBreakdown({
           clientId,
           from: priorFrom,
           to: priorTo,
-          pageTypeFilter: 'VDP',
-          tab: 'vdp',
+          pageTypeFilter,
+          tab,
           onCancelCheck: () => isStale(),
         }),
       ]);
@@ -86,7 +114,7 @@ export default function VdpChannelCmpTable({ clientId, from, to }) {
     } finally {
       if (!isStale()) setLoading(false);
     }
-  }, [clientId, from, to, priorFrom, priorTo]);
+  }, [clientId, from, to, priorFrom, priorTo, pageTypeFilter, tab]);
 
   useEffect(() => {
     load();
@@ -119,7 +147,7 @@ export default function VdpChannelCmpTable({ clientId, from, to }) {
 
   const onCopy = useCallback(() => {
     const lines = [
-      ['Channel', currentPeriodLabel, comparePeriodLabel, 'MoM'].join('\t'),
+      ['Channel', currentPeriodLabel, comparePeriodLabel, deltaLabel].join('\t'),
     ];
     rowsWithColors.forEach((r) => {
       lines.push(
@@ -133,7 +161,7 @@ export default function VdpChannelCmpTable({ clientId, from, to }) {
     });
     lines.push(
       [
-        'Total VDP',
+        totalLabel,
         totals.cur,
         totals.cmp,
         `${totals.delta >= 0 ? '+' : ''}${totals.delta}%`,
@@ -146,15 +174,22 @@ export default function VdpChannelCmpTable({ clientId, from, to }) {
         setTimeout(() => setCopied(false), 1800);
       })
       .catch(() => {});
-  }, [rowsWithColors, totals, currentPeriodLabel, comparePeriodLabel]);
+  }, [
+    rowsWithColors,
+    totals,
+    currentPeriodLabel,
+    comparePeriodLabel,
+    deltaLabel,
+    totalLabel,
+  ]);
 
   return (
     <div className="vdp-card vdp-cmp-panel" style={{ marginTop: 16 }}>
       <div className="vdp-cmp-head">
         <div>
-          <h3>VDP Views by Channel — Period Comparison</h3>
+          <h3>{metricTitle} by Channel — Period Comparison</h3>
           <div className="vdp-cardsub" style={{ marginBottom: 0 }}>
-            {currentPeriodLabel} · {comparePeriodLabel} · MoM
+            {currentPeriodLabel} · {comparePeriodLabel} · {deltaLabel}
           </div>
         </div>
         <div className="vdp-cmp-head-actions">
@@ -180,7 +215,7 @@ export default function VdpChannelCmpTable({ clientId, from, to }) {
                 <th>Channel</th>
                 <th className="col-cur">{currentPeriodLabel}</th>
                 <th className="col-prev">{comparePeriodLabel}</th>
-                <th className="col-mom">MoM</th>
+                <th className="col-mom">{deltaLabel}</th>
               </tr>
             </thead>
             <tbody>
@@ -193,7 +228,7 @@ export default function VdpChannelCmpTable({ clientId, from, to }) {
               ) : rowsWithColors.length === 0 ? (
                 <tr>
                   <td colSpan={4} className="cmp-table-loading">
-                    No VDP channel data for this period.
+                    No {metricTitle} channel data for this period.
                   </td>
                 </tr>
               ) : (
@@ -218,7 +253,7 @@ export default function VdpChannelCmpTable({ clientId, from, to }) {
               )}
               {!loading && rowsWithColors.length > 0 && (
                 <tr className="cmp-tbl-total-row">
-                  <td>Total VDP</td>
+                  <td>{totalLabel}</td>
                   <td className="col-cur">{totals.cur.toLocaleString()}</td>
                   <td className="col-prev">{totals.cmp.toLocaleString()}</td>
                   <td className="col-mom">
@@ -237,7 +272,7 @@ export default function VdpChannelCmpTable({ clientId, from, to }) {
         <span className="vdp-cmp-swatch vdp-cmp-swatch--prev" />
         {comparePeriodLabel}
         <span className="vdp-cmp-foot-note">
-          MoM: {currentPeriodLabel} vs {comparePeriodLabel}
+          {deltaLabel}: {currentPeriodLabel} vs {comparePeriodLabel}
         </span>
       </div>
     </div>

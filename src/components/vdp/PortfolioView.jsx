@@ -1119,7 +1119,7 @@ export default function PortfolioView() {
         <Kpi
           label="Data source"
           value="Live API"
-          sub={error ? 'Partial / check warning' : 'all-dealers-channel-matrix'}
+          sub={error ? 'Partial / check warning' : 'mv_ga4_channel_* · All Dealers'}
         />
       </div>
 

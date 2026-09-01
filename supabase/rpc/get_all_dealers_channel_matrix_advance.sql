@@ -151,6 +151,7 @@ BEGIN
   v_month_from := date_trunc('month', p_from)::date;
   v_month_to   := date_trunc('month', p_to)::date;
 
+  -- Full calendar month → monthly MV; 60+ days → monthly; else daily.
   IF v_year_from = v_year_to
      AND EXTRACT(MONTH FROM p_from)::int = 1
      AND EXTRACT(DAY FROM p_from)::int = 1

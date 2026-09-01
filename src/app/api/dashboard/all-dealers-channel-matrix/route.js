@@ -6,9 +6,10 @@ import { loadSourceMapping } from '@/lib/sourceMapping/store';
 export const maxDuration = 120;
 
 /**
- * All-dealer channel matrix — fast path via materialized views:
+ * All-dealer channel matrix — materialized views:
  *   mv_ga4_channel_daily | mv_ga4_channel_monthly | mv_ga4_channel_yearly
- * through get_all_dealers_channel_matrix_advance.
+ * via get_all_dealers_channel_matrix_advance.
+ * Channel labels/colors aligned to Source Mapping names (display only).
  */
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
@@ -65,12 +66,11 @@ export async function GET(request) {
     const hint = /mv_ga4_channel|does not exist|schema cache/i.test(
       error.message || ''
     )
-      ? ' Ensure mv_ga4_channel_daily / monthly / yearly exist and get_all_dealers_channel_matrix_advance is deployed.'
+      ? ' Ensure mv_ga4_channel_daily / monthly / yearly exist and get_all_dealers_channel_matrix_advance is deployed. Refresh MVs after GA4 sync.'
       : '';
     return NextResponse.json({ error: error.message + hint }, { status: 500 });
   }
 
-  // Align column labels/colors with Source Mapping channel names (no raw scan).
   let rows = data ?? [];
   try {
     const mappingCfg = await loadSourceMapping(supabase);

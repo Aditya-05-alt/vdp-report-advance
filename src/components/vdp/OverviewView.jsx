@@ -27,14 +27,6 @@ const METRIC_OPTS = [
   { value: 'page', label: 'Page Views' },
 ];
 
-function cumulativeFromDaily(dateList, dailyMap) {
-  let running = 0;
-  return dateList.map((iso) => {
-    running += Number(dailyMap[iso]) || 0;
-    return running;
-  });
-}
-
 function formatShortDay(iso) {
   if (!iso) return '';
   const d = new Date(`${iso}T00:00:00`);
@@ -190,7 +182,7 @@ function NewUsedLegend({ chart }) {
   );
 }
 
-function TopVehiclesTable({ rows, showMom, comparePctLabel = 'MoM' }) {
+function TopVehiclesTable({ rows, showMom, comparePctLabel = 'MoM', scroll }) {
   if (!rows?.length) {
     return (
       <div style={{ color: 'var(--vdp-muted)', fontSize: 13, padding: 12 }}>
@@ -198,7 +190,7 @@ function TopVehiclesTable({ rows, showMom, comparePctLabel = 'MoM' }) {
       </div>
     );
   }
-  return (
+  const table = (
     <table className="vdp-table">
       <thead>
         <tr>
@@ -226,6 +218,22 @@ function TopVehiclesTable({ rows, showMom, comparePctLabel = 'MoM' }) {
         ))}
       </tbody>
     </table>
+  );
+  if (!scroll) return table;
+  return <div className="vdp-top-vehicles-scroll">{table}</div>;
+}
+
+function TopVehiclesLimitSelect({ value, onChange }) {
+  return (
+    <select
+      className="vdp-top-vehicles-select"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      aria-label="Top vehicles limit"
+    >
+      <option value="5">Top 5</option>
+      <option value="all">All</option>
+    </select>
   );
 }
 
@@ -265,6 +273,7 @@ export default function OverviewView() {
   const [uniqueUsers, setUniqueUsers] = useState(0);
   const [topVehicles, setTopVehicles] = useState([]);
   const [topVehiclesPri, setTopVehiclesPri] = useState([]);
+  const [topVehiclesMode, setTopVehiclesMode] = useState('5');
   const [channelPageRows, setChannelPageRows] = useState([]);
   const [channelPagePriRows, setChannelPagePriRows] = useState([]);
   const [channelVdpRows, setChannelVdpRows] = useState([]);
@@ -278,6 +287,22 @@ export default function OverviewView() {
   const ga4Id = String(client?.ga4CustomerId || '').trim();
   const canLoad = Boolean(ga4Id) && !isAllDealerClient(client) && !isAllDealer;
   const isVdp = metric === 'vdp';
+  const topVehiclesLimit = 500;
+  const displayTopVehicles =
+    topVehiclesMode === 'all' ? topVehicles : topVehicles.slice(0, 5);
+  const displayTopVehiclesPri =
+    topVehiclesMode === 'all' ? topVehiclesPri : topVehiclesPri.slice(0, 5);
+  const topVehiclesTitle =
+    topVehiclesMode === 'all'
+      ? 'All Vehicles by VDP Views'
+      : 'Top 5 Vehicles by VDP Views';
+  const topVehiclesScroll = topVehiclesMode === 'all';
+  const topVehiclesActions = (
+    <TopVehiclesLimitSelect
+      value={topVehiclesMode}
+      onChange={setTopVehiclesMode}
+    />
+  );
 
   const load = useCallback(async () => {
     if (!canLoad || !curFrom || !curTo) {
@@ -386,7 +411,7 @@ export default function OverviewView() {
             to: curTo,
             priorFrom: withCompare ? priFrom : null,
             priorTo: withCompare ? priTo : null,
-            limit: 5,
+            limit: topVehiclesLimit,
             onCancelCheck: () => isStale(),
           })
         ),
@@ -396,7 +421,7 @@ export default function OverviewView() {
                 clientId: ga4Id,
                 from: priFrom,
                 to: priTo,
-                limit: 5,
+                limit: topVehiclesLimit,
                 onCancelCheck: () => isStale(),
               })
             : emptyList
@@ -528,7 +553,7 @@ export default function OverviewView() {
         setProgress(null);
       }
     }
-  }, [canLoad, ga4Id, curFrom, curTo, priFrom, priTo, showCompare]);
+  }, [canLoad, ga4Id, curFrom, curTo, priFrom, priTo, showCompare, topVehiclesLimit]);
 
   useEffect(() => {
     if (dealersLoading) return undefined;
@@ -578,119 +603,137 @@ export default function OverviewView() {
   const activeMom = isVdp ? vdpMom : pvMom;
   const metricLabel = isVdp ? 'VDP Views' : 'Page Views';
 
-  const seriesCur = useMemo(
-    () => cumulativeFromDaily(curDates, activeCurDaily),
-    [curDates, activeCurDaily]
-  );
-  // MoM: full prior month on the chart. PoP: align to current day count.
-  const seriesPri = useMemo(() => {
-    const datesForPri =
-      compareMode === 'mom'
-        ? priDates
-        : priDates.slice(0, Math.max(curDates.length, 0));
-    return cumulativeFromDaily(datesForPri, activePriDaily);
-  }, [priDates, curDates.length, activePriDaily, compareMode]);
-
-  const chartComparePriLabel = useMemo(() => {
-    if (!showCompare || !priDates.length) return priLabel;
-    // MoM: full prior month label (not truncated to current MTD days)
-    if (compareMode === 'mom') return priLabel;
-    const aligned = priDates.slice(0, curDates.length);
-    const a = aligned[0];
-    const b = aligned[aligned.length - 1];
-    if (!a || !b) return priLabel;
-    return a === b ? formatShortDay(a) : `${formatShortDay(a)}–${formatShortDay(b)}`;
-  }, [showCompare, priDates, curDates, priLabel, compareMode]);
-
   const dayCount = Math.max(curDates.length, 1);
   const avgPerDay = safeDiv(activeCurTotal, dayCount);
 
   const lineData = useMemo(() => {
-    const isMomFull = showCompare && compareMode === 'mom';
-    const axisLen = isMomFull
-      ? Math.max(seriesCur.length, seriesPri.length, 1)
-      : Math.max(seriesCur.length, 1);
+    // Compare: overlay both series on the same day index (keep lines together).
+    // No compare: one cumulative line across the full selected date range.
+    if (showCompare && priFrom && priTo) {
+      const axisLen = Math.max(curDates.length, priDates.length, 1);
+      const labels = Array.from({ length: axisLen }, (_, i) => {
+        const iso = curDates[i] || priDates[i];
+        if (!iso) return `Day ${i + 1}`;
+        const d = new Date(`${iso}T00:00:00`);
+        if (Number.isNaN(d.getTime())) return iso;
+        // Prefer current-period calendar labels; fall back to day index for extra prior days
+        if (curDates[i]) {
+          return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+        }
+        return `Day ${i + 1}`;
+      });
 
-    const labels = Array.from({ length: axisLen }, (_, i) => {
-      if (isMomFull) {
-        // Day-of-month index so current MTD and full prior month share one axis
-        return String(i + 1);
-      }
-      const iso = curDates[i];
-      if (!iso) return String(i + 1);
+      let curRunning = 0;
+      const curSeries = Array.from({ length: axisLen }, (_, i) => {
+        const iso = curDates[i];
+        if (!iso) return null;
+        curRunning += Number(activeCurDaily[iso]) || 0;
+        return curRunning;
+      });
+
+      let priRunning = 0;
+      const priSeries = Array.from({ length: axisLen }, (_, i) => {
+        const iso = priDates[i];
+        if (!iso) return null;
+        priRunning += Number(activePriDaily[iso]) || 0;
+        return priRunning;
+      });
+
+      return {
+        labels,
+        datasets: [
+          {
+            label: `${curLabel} (current)`,
+            data: curSeries,
+            borderColor: '#2563eb',
+            backgroundColor: 'rgba(37,99,235,.08)',
+            fill: true,
+            tension: 0.3,
+            spanGaps: false,
+            pointRadius: axisLen <= 45 ? 2 : 0,
+            pointHoverRadius: 6,
+            pointHitRadius: 12,
+            pointHoverBackgroundColor: '#2563eb',
+            pointHoverBorderColor: '#fff',
+            pointHoverBorderWidth: 2,
+            borderWidth: 2.5,
+          },
+          {
+            label: `${priLabel} (prior)`,
+            data: priSeries,
+            borderColor: '#94a3b8',
+            backgroundColor: 'transparent',
+            borderDash: [5, 4],
+            fill: false,
+            tension: 0.3,
+            spanGaps: false,
+            pointRadius: axisLen <= 45 ? 2 : 0,
+            pointHoverRadius: 5,
+            pointHitRadius: 12,
+            pointHoverBackgroundColor: '#94a3b8',
+            pointHoverBorderColor: '#fff',
+            pointHoverBorderWidth: 2,
+            borderWidth: 2,
+          },
+        ],
+      };
+    }
+
+    const labels = curDates.map((iso) => {
       const d = new Date(`${iso}T00:00:00`);
       if (Number.isNaN(d.getTime())) return iso;
       return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
     });
 
-    const curSeries = isMomFull
-      ? [
-          ...seriesCur,
-          ...Array(Math.max(0, axisLen - seriesCur.length)).fill(null),
-        ]
-      : seriesCur;
+    let curRunning = 0;
+    const curSeries = curDates.map((iso) => {
+      curRunning += Number(activeCurDaily[iso]) || 0;
+      return curRunning;
+    });
 
-    const datasets = [
-      {
-        label: `${curLabel} (current)`,
-        data: curSeries,
-        borderColor: '#2563eb',
-        backgroundColor: 'rgba(37,99,235,.08)',
-        fill: true,
-        tension: 0.3,
-        spanGaps: false,
-        pointRadius: 0,
-        pointHoverRadius: 6,
-        pointHitRadius: 12,
-        pointHoverBackgroundColor: '#2563eb',
-        pointHoverBorderColor: '#fff',
-        pointHoverBorderWidth: 2,
-        borderWidth: 2.5,
-      },
-    ];
-    if (showCompare && priFrom && priTo) {
-      const priSeries = isMomFull
-        ? seriesPri
-        : seriesPri.slice(0, seriesCur.length);
-      datasets.push({
-        label: `${chartComparePriLabel} (prior)`,
-        data: priSeries,
-        borderColor: '#94a3b8',
-        backgroundColor: 'transparent',
-        borderDash: [5, 4],
-        tension: 0.3,
-        spanGaps: false,
-        pointRadius: 0,
-        pointHoverRadius: 5,
-        pointHitRadius: 12,
-        pointHoverBackgroundColor: '#94a3b8',
-        pointHoverBorderColor: '#fff',
-        pointHoverBorderWidth: 2,
-        borderWidth: 2,
-      });
-    }
-    return { labels, datasets };
+    return {
+      labels,
+      datasets: [
+        {
+          label: curLabel,
+          data: curSeries,
+          borderColor: '#2563eb',
+          backgroundColor: 'rgba(37,99,235,.08)',
+          fill: true,
+          tension: 0.3,
+          spanGaps: false,
+          pointRadius: curDates.length <= 45 ? 2 : 0,
+          pointHoverRadius: 6,
+          pointHitRadius: 12,
+          pointHoverBackgroundColor: '#2563eb',
+          pointHoverBorderColor: '#fff',
+          pointHoverBorderWidth: 2,
+          borderWidth: 2.5,
+        },
+      ],
+    };
   }, [
-    seriesCur,
-    seriesPri,
-    curLabel,
-    chartComparePriLabel,
     curDates,
+    priDates,
+    activeCurDaily,
+    activePriDaily,
+    curLabel,
+    priLabel,
     showCompare,
-    compareMode,
     priFrom,
     priTo,
   ]);
 
   const cumulativeChartSub = useMemo(() => {
     if (!showCompare) {
-      return `Running total through ${curLabel} — hover a day for values`;
+      return `Running total · full range ${curLabel} — hover a day for values`;
     }
-    if (compareMode === 'mom') {
-      return `Running total, ${curLabel} (current) vs full prior month (${priLabel}) — hover a day for values`;
-    }
-    return `Running total, ${curLabel} vs. ${chartComparePriLabel} — hover a day for values`;
-  }, [showCompare, compareMode, curLabel, priLabel, chartComparePriLabel]);
+    return `Running total · ${curLabel} vs ${priLabel} (overlaid) — hover a day for values`;
+  }, [showCompare, curLabel, priLabel]);
+
+  const lineAxisLen = showCompare
+    ? Math.max(curDates.length, priDates.length, 1)
+    : Math.max(curDates.length, 1);
 
   const lineOptions = useMemo(
     () => ({
@@ -715,9 +758,10 @@ export default function OverviewView() {
             title(items) {
               const item = items?.[0];
               if (!item) return '';
-              return item.label || `Day ${item.dataIndex + 1}`;
+              return item.label || '';
             },
             label(item) {
+              if (item.raw == null || Number.isNaN(Number(item.raw))) return null;
               const val = Number(item.raw) || 0;
               return ` ${item.dataset.label}: ${fmt(val)}`;
             },
@@ -730,14 +774,14 @@ export default function OverviewView() {
             maxRotation: 45,
             minRotation: 45,
             font: { size: 10 },
-            autoSkip: true,
-            maxTicksLimit: 15,
+            autoSkip: lineAxisLen > 62,
+            maxTicksLimit: lineAxisLen > 62 ? 20 : undefined,
           },
         },
-        y: { ticks: { callback: (v) => fmt(v) } },
+        y: { beginAtZero: true, ticks: { callback: (v) => fmt(v) } },
       },
     }),
-    []
+    [lineAxisLen]
   );
 
   const sourceChart = useMemo(
@@ -954,11 +998,27 @@ export default function OverviewView() {
               </Card>
 
               <div className="vdp-grid-2 vdp-grid-2--equal vdp-grid-2--overview">
-                <Card title="Top 5 Vehicles by VDP Views" sub={`${curLabel} · current`}>
-                  <TopVehiclesTable rows={topVehicles} showMom={false} />
+                <Card
+                  title={topVehiclesTitle}
+                  sub={`${curLabel} · current`}
+                  actions={topVehiclesActions}
+                >
+                  <TopVehiclesTable
+                    rows={displayTopVehicles}
+                    showMom={false}
+                    scroll={topVehiclesScroll}
+                  />
                 </Card>
-                <Card title="Top 5 Vehicles by VDP Views" sub={`${priLabel} · prior`}>
-                  <TopVehiclesTable rows={topVehiclesPri} showMom={false} />
+                <Card
+                  title={topVehiclesTitle}
+                  sub={`${priLabel} · prior`}
+                  actions={topVehiclesActions}
+                >
+                  <TopVehiclesTable
+                    rows={displayTopVehiclesPri}
+                    showMom={false}
+                    scroll={topVehiclesScroll}
+                  />
                 </Card>
               </div>
 
@@ -1045,13 +1105,15 @@ export default function OverviewView() {
                 </Card>
 
                 <Card
-                  title="Top 5 Vehicles by VDP Views"
+                  title={topVehiclesTitle}
                   sub="Current period · smart_final_data"
+                  actions={topVehiclesActions}
                 >
                   <TopVehiclesTable
-                    rows={topVehicles}
+                    rows={displayTopVehicles}
                     showMom
                     comparePctLabel={comparePctLabel}
+                    scroll={topVehiclesScroll}
                   />
                 </Card>
               </div>

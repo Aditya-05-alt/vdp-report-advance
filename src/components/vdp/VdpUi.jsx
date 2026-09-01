@@ -44,11 +44,23 @@ export function Kpi({ label, value, delta, sub, isPP }) {
   );
 }
 
-export function Card({ title, sub, children, style, className }) {
+export function Card({ title, sub, actions, children, style, className }) {
+  const periodSub =
+    typeof sub === 'string' && / · (current|prior)\s*$/i.test(sub);
+  const subClass = `vdp-cardsub${periodSub ? ' vdp-cardsub--period' : ''}`;
+
   return (
     <div className={`vdp-card${className ? ` ${className}` : ''}`} style={style}>
-      {title && <h3>{title}</h3>}
-      {sub && <div className="vdp-cardsub">{sub}</div>}
+      {(title || actions) && (
+        <div className="vdp-card-head">
+          <div className="vdp-card-head__text">
+            {title ? <h3>{title}</h3> : null}
+            {sub ? <div className={subClass}>{sub}</div> : null}
+          </div>
+          {actions ? <div className="vdp-card-head__actions">{actions}</div> : null}
+        </div>
+      )}
+      {!title && !actions && sub ? <div className={subClass}>{sub}</div> : null}
       {children}
     </div>
   );

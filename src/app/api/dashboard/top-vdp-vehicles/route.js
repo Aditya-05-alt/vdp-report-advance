@@ -9,10 +9,11 @@ export async function GET(request) {
   const clientId = searchParams.get('clientId')?.trim();
   const from = searchParams.get('from')?.slice(0, 10);
   const to = searchParams.get('to')?.slice(0, 10);
-  const limit = Math.min(
-    Math.max(Number(searchParams.get('limit')) || 5, 1),
-    25
-  );
+  const limitRaw = searchParams.get('limit');
+  const limit =
+    limitRaw == null || limitRaw === '' || String(limitRaw).toLowerCase() === 'all'
+      ? 500
+      : Math.min(Math.max(Number(limitRaw) || 5, 1), 500);
 
   if (!clientId || !from || !to) {
     return NextResponse.json(

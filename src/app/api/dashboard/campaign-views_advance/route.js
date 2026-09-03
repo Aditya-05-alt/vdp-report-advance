@@ -11,6 +11,81 @@ function normalizeCells(rows) {
   }));
 }
 
+function ymd(d) {
+  if (!d) return null;
+  const s = String(d).slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+}
+
+function daysInclusive(from, to) {
+  const a = ymd(from);
+  const b = ymd(to);
+  if (!a || !b || a > b) return 0;
+  const ms =
+    Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`);
+  return Math.floor(ms / 86400000) + 1;
+}
+
+function maxYmd(a, b) {
+  return a >= b ? a : b;
+}
+
+function minYmd(a, b) {
+  return a <= b ? a : b;
+}
+
+/**
+ * Cost from smart_campaign (Google Ads sync), keyed by campaign name.
+ * Prorates cost when report_from/report_to only partially overlaps the UI range.
+ */
+async function fetchCampaignCosts(supabase, clientId, from, to) {
+  const cid = String(clientId || '').trim();
+  if (!cid || !from || !to) return new Map();
+
+  const asNum = Number(cid);
+  let query = supabase
+    .from('smart_campaign')
+    .select('name, cost, report_from, report_to, customer_id, client_id')
+    .lte('report_from', to)
+    .gte('report_to', from)
+    .limit(5000);
+
+  if (Number.isFinite(asNum) && asNum > 0) {
+    query = query.or(`customer_id.eq.${asNum},client_id.eq.${cid}`);
+  } else {
+    query = query.eq('client_id', cid);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    console.warn('[campaign-views_advance] smart_campaign cost:', error.message);
+    return new Map();
+  }
+
+  const byName = new Map();
+  for (const row of data || []) {
+    const name = String(row.name || '').trim();
+    if (!name) continue;
+    const reportFrom = ymd(row.report_from);
+    const reportTo = ymd(row.report_to);
+    const fullCost = Number(row.cost) || 0;
+    if (!reportFrom || !reportTo || fullCost === 0) {
+      byName.set(name, (byName.get(name) || 0) + fullCost);
+      continue;
+    }
+    const overlapFrom = maxYmd(from, reportFrom);
+    const overlapTo = minYmd(to, reportTo);
+    const reportDays = daysInclusive(reportFrom, reportTo);
+    const overlapDays = daysInclusive(overlapFrom, overlapTo);
+    const share =
+      reportDays > 0 && overlapDays > 0
+        ? fullCost * (overlapDays / reportDays)
+        : 0;
+    byName.set(name, (byName.get(name) || 0) + share);
+  }
+  return byName;
+}
+
 /** Fallback when cells RPC / jsonb cells are missing — aggregate page rows in Node. */
 async function fetchCellsFallback(supabase, clientId, from, to, pageType) {
   const pageSize = 1000;
@@ -100,7 +175,7 @@ export async function GET(request) {
   });
 
   try {
-    const [mainRes, cellsRes] = await Promise.all([
+    const [mainRes, cellsRes, costMap] = await Promise.all([
       supabase.rpc('get_wa_campaign_views_advance', {
         p_client_id: clientId,
         p_from: from,
@@ -113,6 +188,7 @@ export async function GET(request) {
         p_to: to,
         p_page_type: pageType,
       }),
+      fetchCampaignCosts(supabase, clientId, from, to),
     ]);
 
     if (mainRes.error) {
@@ -156,20 +232,26 @@ export async function GET(request) {
     }
 
     return NextResponse.json({
-      campaigns: campaigns.map((r, i) => ({
-        campaign: String(r.campaign || '(not set)').trim(),
-        views: Number(r.views) || 0,
-        sessions: Number(r.sessions) || 0,
-        total_users: Number(r.total_users) || 0,
-        new_users: Number(r.new_users) || 0,
-        pct: Number(r.pct) || 0,
-        rank: Number(r.rank) || i + 1,
-      })),
+      campaigns: campaigns.map((r, i) => {
+        const campaign = String(r.campaign || '(not set)').trim();
+        const cost = costMap.get(campaign) || 0;
+        return {
+          campaign,
+          views: Number(r.views) || 0,
+          cost: Math.round(cost * 100) / 100,
+          sessions: Number(r.sessions) || 0,
+          total_users: Number(r.total_users) || 0,
+          new_users: Number(r.new_users) || 0,
+          pct: Number(r.pct) || 0,
+          rank: Number(r.rank) || i + 1,
+        };
+      }),
       daily,
       cells,
       meta: {
         ...(payload.meta && typeof payload.meta === 'object' ? payload.meta : {}),
         source: 'get_wa_campaign_views_advance',
+        costSource: 'smart_campaign',
         cellsSource,
         pageType,
         clientId,

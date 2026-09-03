@@ -23,6 +23,14 @@ const PAGE_TYPE_OPTS = [
 
 const WA_PREFIX_HINT = 'WA| / WA | campaigns only';
 
+function fmtCost(n) {
+  const v = Number(n) || 0;
+  return `$${v.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
 function aggregateByCampaign(rows) {
   const map = new Map();
   for (const row of rows || []) {
@@ -30,11 +38,13 @@ function aggregateByCampaign(rows) {
     const prev = map.get(name) || {
       campaign: name,
       views: 0,
+      cost: 0,
       sessions: 0,
       total_users: 0,
       new_users: 0,
     };
     prev.views += Number(row.views) || 0;
+    prev.cost += Number(row.cost) || 0;
     prev.sessions += Number(row.sessions) || 0;
     prev.total_users += Number(row.total_users) || 0;
     prev.new_users += Number(row.new_users) || 0;
@@ -229,7 +239,10 @@ export default function CampaignsView() {
     if (!detailCompareActive) return current;
 
     const priorMap = new Map(
-      aggregateByCampaign(priorCampaigns).map((r) => [r.campaign, r.views])
+      aggregateByCampaign(priorCampaigns).map((r) => [
+        r.campaign,
+        { views: r.views, cost: r.cost },
+      ])
     );
     const names = new Set([
       ...current.map((r) => r.campaign),
@@ -238,13 +251,18 @@ export default function CampaignsView() {
 
     const merged = [...names].map((campaign) => {
       const cur = current.find((r) => r.campaign === campaign);
+      const prior = priorMap.get(campaign);
       const views = cur?.views || 0;
-      const views0 = priorMap.get(campaign) || 0;
+      const views0 = prior?.views || 0;
+      const cost = cur?.cost || 0;
+      const cost0 = prior?.cost || 0;
       const deltaPct = safeDiv(views - views0, views0) * 100;
       return {
         campaign,
         views,
         views0,
+        cost,
+        cost0,
         sessions: cur?.sessions || 0,
         total_users: cur?.total_users || 0,
         new_users: cur?.new_users || 0,
@@ -454,6 +472,14 @@ export default function CampaignsView() {
 
   const totalViews = useMemo(
     () => byCampaign.reduce((s, r) => s + r.views, 0),
+    [byCampaign]
+  );
+  const totalCost = useMemo(
+    () => byCampaign.reduce((s, r) => s + (Number(r.cost) || 0), 0),
+    [byCampaign]
+  );
+  const priorTotalCost = useMemo(
+    () => byCampaign.reduce((s, r) => s + (Number(r.cost0) || 0), 0),
     [byCampaign]
   );
   const dailyTotal = useMemo(
@@ -725,13 +751,16 @@ export default function CampaignsView() {
                       ? [
                           ['campaign', 'Session Campaign'],
                           ['views', `${pageLabel} (Current)`],
+                          ['cost', 'Cost (Current)'],
                           ['views0', `${pageLabel} (Prior)`],
+                          ['cost0', 'Cost (Prior)'],
                           ['deltaPct', comparePctLabel],
                           ['pct', '% of Total'],
                         ]
                       : [
                           ['campaign', 'Session Campaign'],
                           ['views', pageLabel],
+                          ['cost', 'Cost'],
                           ['pct', '% of Total'],
                         ]
                     ).map(([k, label]) => (
@@ -752,9 +781,11 @@ export default function CampaignsView() {
                     <tr key={r.campaign}>
                       <td className="vdp-campaign-name">{r.campaign}</td>
                       <td className="right mono">{fmt(r.views)}</td>
+                      <td className="right mono">{fmtCost(r.cost)}</td>
                       {detailCompareActive ? (
                         <>
                           <td className="right mono">{fmt(r.views0 || 0)}</td>
+                          <td className="right mono">{fmtCost(r.cost0)}</td>
                           <td
                             className={`right vdp-delta ${momClass(
                               (r.deltaPct || 0) / 100
@@ -776,9 +807,11 @@ export default function CampaignsView() {
                   <tr>
                     <td>Total</td>
                     <td className="right mono">{fmt(totalViews)}</td>
+                    <td className="right mono">{fmtCost(totalCost)}</td>
                     {detailCompareActive ? (
                       <>
                         <td className="right mono">{fmt(priorTotalViews)}</td>
+                        <td className="right mono">{fmtCost(priorTotalCost)}</td>
                         <td
                           className={`right vdp-delta ${momClass(
                             safeDiv(totalViews - priorTotalViews, priorTotalViews)

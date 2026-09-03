@@ -1414,6 +1414,153 @@
 }
 .vdp-tag.new { background: #dcfce7; color: #166534; }
 .vdp-tag.used { background: #e0e7ff; color: #3730a3; }
+.vdp-tag.available { background: #dcfce7; color: #166534; }
+.vdp-tag.absent { background: #fee2e2; color: #991b1b; }
+
+.vdp-vehicle-age-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(28px, 1fr));
+  gap: 4px;
+}
+.vdp-vehicle-age-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.vdp-vehicle-age-cell.available {
+  background: #dcfce7;
+  color: #166534;
+}
+.vdp-vehicle-age-cell.absent {
+  background: #fee2e2;
+  color: #991b1b;
+}
+.vdp-vehicle-age-day {
+  line-height: 1;
+}
+
+.vdp-vehicle-age-daterange {
+  display: flex;
+  align-items: center;
+  min-width: 220px;
+}
+.vdp-vehicle-age-daterange .cdr-trigger,
+.vdp-vehicle-age-daterange button {
+  max-width: 100%;
+}
+.vdp-vehicle-age-matrix {
+  --va-col-vin: 150px;
+  --va-col-vehicle: 340px;
+  --va-col-age: 64px;
+  --va-col-avail: 72px;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.vdp-vehicle-age-matrix th.vdp-va-sticky,
+.vdp-vehicle-age-matrix td.vdp-va-sticky {
+  position: sticky !important;
+  z-index: 2;
+  background: #fff;
+  box-shadow: 1px 0 0 #e2e8f0;
+  vertical-align: top;
+}
+.vdp-vehicle-age-matrix thead th.vdp-va-sticky {
+  z-index: 4;
+  background: #f8fafc;
+  vertical-align: middle;
+}
+.vdp-vehicle-age-matrix .vdp-va-sticky--0 {
+  left: 0 !important;
+  width: var(--va-col-vin);
+  min-width: var(--va-col-vin);
+  max-width: var(--va-col-vin);
+}
+.vdp-vehicle-age-matrix .vdp-va-sticky--1 {
+  left: var(--va-col-vin) !important;
+  width: var(--va-col-vehicle);
+  min-width: var(--va-col-vehicle);
+  max-width: var(--va-col-vehicle);
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
+  line-height: 1.35;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+.vdp-va-vehicle {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.vdp-va-vehicle-name {
+  display: block;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  font-weight: 600;
+  color: var(--vdp-text);
+}
+.vdp-vehicle-age-matrix .vdp-va-sticky--2 {
+  left: calc(var(--va-col-vin) + var(--va-col-vehicle)) !important;
+  width: var(--va-col-age);
+  min-width: var(--va-col-age);
+  max-width: var(--va-col-age);
+}
+.vdp-vehicle-age-matrix .vdp-va-sticky--3 {
+  left: calc(var(--va-col-vin) + var(--va-col-vehicle) + var(--va-col-age)) !important;
+  width: var(--va-col-avail);
+  min-width: var(--va-col-avail);
+  max-width: var(--va-col-avail);
+  box-shadow: 2px 0 4px rgba(15, 23, 42, 0.08);
+}
+.vdp-vehicle-age-matrix th.vdp-vehicle-age-day-th {
+  min-width: 42px;
+  width: 42px;
+  padding-left: 2px;
+  padding-right: 2px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.vdp-vehicle-age-matrix td.vdp-vehicle-age-day-td {
+  min-width: 28px;
+  width: 28px;
+  padding: 4px 2px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.vdp-vehicle-age-matrix td.vdp-vehicle-age-day-td.available {
+  background: #dcfce7;
+  color: #166534;
+}
+.vdp-vehicle-age-matrix td.vdp-vehicle-age-day-td.absent {
+  background: #fee2e2;
+  color: #991b1b;
+}
+.vdp-vehicle-age-row {
+  cursor: pointer;
+}
+.vdp-vehicle-age-row:hover td:not(.vdp-vehicle-age-day-td):not(.vdp-va-sticky) {
+  background: #f1f5f9;
+}
+.vdp-vehicle-age-row:hover td.vdp-va-sticky {
+  background: #e2e8f0;
+}
+.vdp-vehicle-age-row:hover td.vdp-vehicle-age-day-td.available {
+  background: #bbf7d0;
+}
+.vdp-vehicle-age-row:hover td.vdp-vehicle-age-day-td.absent {
+  background: #fecaca;
+}
+
 .vdp-table .right,
 .vdp-table th.right { text-align: right; }
 .mono { font-variant-numeric: tabular-nums; }

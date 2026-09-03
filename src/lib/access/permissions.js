@@ -52,6 +52,8 @@ export function reportKeyFromPathname(pathname) {
   // Available to every logged-in user (same as HTML prototype top tabs)
   if (pathname?.startsWith('/dashboard/inventory-analyse')) return null;
   if (pathname?.startsWith('/dashboard/source-mapping')) return null;
+  // Same access gate as Inventory Performance
+  if (pathname?.startsWith('/dashboard/vehicle-age')) return 'inventory';
   if (pathname?.startsWith('/dashboard/inventory')) return 'inventory';
   // Legacy routes redirect visually; treat as overview for access
   if (

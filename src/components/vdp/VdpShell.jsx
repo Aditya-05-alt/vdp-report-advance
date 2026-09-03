@@ -27,6 +27,7 @@ const DEALER_VIEWS = [
   { id: 'traffic', href: '/dashboard/traffic', label: 'Traffic by Source' },
   { id: 'campaigns', href: '/dashboard/campaigns_advance', label: 'Campaign Views' },
   { id: 'inventory', href: '/dashboard/inventory', label: 'Inventory Performance' },
+  { id: 'vehicle-age', href: '/dashboard/vehicle-age', label: 'Vehicle Age' },
 ];
 
 function viewFromPath(pathname) {
@@ -41,6 +42,7 @@ function viewFromPath(pathname) {
   ) {
     return 'campaigns';
   }
+  if (pathname.startsWith('/dashboard/vehicle-age')) return 'vehicle-age';
   if (pathname.startsWith('/dashboard/inventory')) return 'inventory';
   return 'portfolio';
 }

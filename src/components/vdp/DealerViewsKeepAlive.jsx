@@ -5,12 +5,13 @@ import OverviewView from './OverviewView';
 import TrafficView from './TrafficView';
 import CampaignsView from './CampaignsView';
 import InventoryView from './InventoryView';
+import VehicleAgeView from './VehicleAgeView';
 
-const TAB_IDS = ['overview', 'traffic', 'campaigns', 'inventory'];
+const TAB_IDS = ['overview', 'traffic', 'campaigns', 'inventory', 'vehicle-age'];
 
 /**
- * Keep dealer Overview / Traffic / Campaign Views / Inventory mounted after
- * first visit so tab switches are instant (no remount + refetch).
+ * Keep dealer Overview / Traffic / Campaign Views / Inventory / Vehicle Age
+ * mounted after first visit so tab switches are instant (no remount + refetch).
  * Remounts when clientKey (dealer) changes.
  */
 function DealerViewsKeepAliveInner({ activeView }) {
@@ -19,6 +20,7 @@ function DealerViewsKeepAliveInner({ activeView }) {
     traffic: activeView === 'traffic',
     campaigns: activeView === 'campaigns',
     inventory: activeView === 'inventory',
+    'vehicle-age': activeView === 'vehicle-age',
   }));
 
   useEffect(() => {
@@ -69,6 +71,14 @@ function DealerViewsKeepAliveInner({ activeView }) {
           aria-hidden={activeView !== 'inventory'}
         >
           <InventoryView />
+        </div>
+      ) : null}
+      {mounted['vehicle-age'] ? (
+        <div
+          className={`vdp-tab-pane${activeView === 'vehicle-age' ? ' is-active' : ''}`}
+          aria-hidden={activeView !== 'vehicle-age'}
+        >
+          <VehicleAgeView />
         </div>
       ) : null}
     </div>

@@ -17,8 +17,8 @@ import { useVdpDateRange } from './VdpDateRangeContext';
 import { Card, Kpi, Seg, Toolbar, ToolbarGroup } from './VdpUi';
 
 const PAGE_TYPE_OPTS = [
-  { value: 'ALL', label: 'All Page Views' },
   { value: 'VDP', label: 'VDP Only' },
+  { value: 'ALL', label: 'All Page Views' },
 ];
 
 const WA_PREFIX_HINT = 'WA| / WA | campaigns only';
@@ -26,6 +26,21 @@ const WA_PREFIX_HINT = 'WA| / WA | campaigns only';
 function fmtCost(n) {
   const v = Number(n) || 0;
   return `$${v.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+/** Views (or VDP views) per $1 of spend. */
+function viewsPerCost(views, cost) {
+  const c = Number(cost) || 0;
+  if (c <= 0) return null;
+  return (Number(views) || 0) / c;
+}
+
+function fmtViewsPerCost(n) {
+  if (n == null || !Number.isFinite(n)) return '—';
+  return `$${n.toLocaleString('en-US', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
@@ -54,6 +69,7 @@ function aggregateByCampaign(rows) {
   const total = sorted.reduce((s, r) => s + r.views, 0);
   return sorted.map((r, i) => ({
     ...r,
+    viewsPerCost: viewsPerCost(r.views, r.cost),
     rank: i + 1,
     pct: total > 0 ? Math.round((r.views / total) * 10000) / 100 : 0,
   }));
@@ -63,7 +79,7 @@ export default function CampaignsView() {
   const { client, loading: dealersLoading, isAllDealer } = useClient();
   const { from: curFrom, to: curTo, curLabel } = useVdpDateRange();
 
-  const [pageType, setPageType] = useState('ALL');
+  const [pageType, setPageType] = useState('VDP');
   const [detailCompareMode, setDetailCompareMode] = useState(null);
   const [campaignSort, setCampaignSort] = useState({ k: 'views', dir: -1 });
   const [matrixSearch, setMatrixSearch] = useState('');
@@ -263,6 +279,8 @@ export default function CampaignsView() {
         views0,
         cost,
         cost0,
+        viewsPerCost: viewsPerCost(views, cost),
+        viewsPerCost0: viewsPerCost(views0, cost0),
         sessions: cur?.sessions || 0,
         total_users: cur?.total_users || 0,
         new_users: cur?.new_users || 0,
@@ -488,6 +506,9 @@ export default function CampaignsView() {
   );
   const topCampaign = byCampaign[0] || null;
   const pageLabel = pageType === 'VDP' ? 'VDP Views' : 'Page Views';
+  const efficiencyLabel = pageType === 'VDP' ? 'VDP / Cost' : 'Page / Cost';
+  const totalViewsPerCost = viewsPerCost(totalViews, totalCost);
+  const priorTotalViewsPerCost = viewsPerCost(priorTotalViews, priorTotalCost);
 
   const campaignLineData = useMemo(() => {
     const ordered = [...(daily || [])]
@@ -752,8 +773,10 @@ export default function CampaignsView() {
                           ['campaign', 'Session Campaign'],
                           ['views', `${pageLabel} (Current)`],
                           ['cost', 'Cost (Current)'],
+                          ['viewsPerCost', `${efficiencyLabel} (Current)`],
                           ['views0', `${pageLabel} (Prior)`],
                           ['cost0', 'Cost (Prior)'],
+                          ['viewsPerCost0', `${efficiencyLabel} (Prior)`],
                           ['deltaPct', comparePctLabel],
                           ['pct', '% of Total'],
                         ]
@@ -761,6 +784,7 @@ export default function CampaignsView() {
                           ['campaign', 'Session Campaign'],
                           ['views', pageLabel],
                           ['cost', 'Cost'],
+                          ['viewsPerCost', efficiencyLabel],
                           ['pct', '% of Total'],
                         ]
                     ).map(([k, label]) => (
@@ -782,10 +806,16 @@ export default function CampaignsView() {
                       <td className="vdp-campaign-name">{r.campaign}</td>
                       <td className="right mono">{fmt(r.views)}</td>
                       <td className="right mono">{fmtCost(r.cost)}</td>
+                      <td className="right mono">
+                        {fmtViewsPerCost(r.viewsPerCost)}
+                      </td>
                       {detailCompareActive ? (
                         <>
                           <td className="right mono">{fmt(r.views0 || 0)}</td>
                           <td className="right mono">{fmtCost(r.cost0)}</td>
+                          <td className="right mono">
+                            {fmtViewsPerCost(r.viewsPerCost0)}
+                          </td>
                           <td
                             className={`right vdp-delta ${momClass(
                               (r.deltaPct || 0) / 100
@@ -808,10 +838,16 @@ export default function CampaignsView() {
                     <td>Total</td>
                     <td className="right mono">{fmt(totalViews)}</td>
                     <td className="right mono">{fmtCost(totalCost)}</td>
+                    <td className="right mono">
+                      {fmtViewsPerCost(totalViewsPerCost)}
+                    </td>
                     {detailCompareActive ? (
                       <>
                         <td className="right mono">{fmt(priorTotalViews)}</td>
                         <td className="right mono">{fmtCost(priorTotalCost)}</td>
+                        <td className="right mono">
+                          {fmtViewsPerCost(priorTotalViewsPerCost)}
+                        </td>
                         <td
                           className={`right vdp-delta ${momClass(
                             safeDiv(totalViews - priorTotalViews, priorTotalViews)

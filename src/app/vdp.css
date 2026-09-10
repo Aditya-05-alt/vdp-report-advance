@@ -1282,6 +1282,10 @@
 .vdp-table-scroll--10 {
   max-height: calc(42px + (10 * 37px));
 }
+/* Header + ~15 body rows visible; remaining inventory rows scroll */
+.vdp-table-scroll--15 {
+  max-height: calc(42px + (15 * 37px));
+}
 .vdp-table-scroll thead th {
   position: sticky;
   top: 0;

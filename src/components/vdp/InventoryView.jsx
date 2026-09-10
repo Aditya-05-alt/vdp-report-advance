@@ -17,7 +17,7 @@ const COND_OPTS = [
   { value: 'Used', label: 'Used' },
 ];
 
-const PAGE_SIZE = 12;
+const VISIBLE_ROWS = 15;
 
 function conditionClass(condition) {
   const c = String(condition || '').toLowerCase();
@@ -42,7 +42,6 @@ export default function InventoryView() {
   const [search, setSearch] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [sort, setSort] = useState({ k: 'vdp1', dir: -1 });
-  const [page, setPage] = useState(0);
   const [rows, setRows] = useState([]);
   const [makeOptions, setMakeOptions] = useState([]);
   const [catOptions, setCatOptions] = useState([]);
@@ -110,7 +109,6 @@ export default function InventoryView() {
     if (searchTimer.current) clearTimeout(searchTimer.current);
     searchTimer.current = setTimeout(() => {
       setSearch(searchInput.trim());
-      setPage(0);
     }, 300);
     return () => {
       if (searchTimer.current) clearTimeout(searchTimer.current);
@@ -272,20 +270,11 @@ export default function InventoryView() {
     []
   );
 
-  const start = page * PAGE_SIZE;
-  const pageRows = sorted.slice(start, start + PAGE_SIZE);
-
   const onSort = (k) => {
     setSort((prev) => ({
       k,
       dir: prev.k === k ? -prev.dir : -1,
     }));
-    setPage(0);
-  };
-
-  const resetPage = (fn) => (v) => {
-    setPage(0);
-    fn(v);
   };
 
   const isBusy = dealersLoading || loading;
@@ -314,7 +303,6 @@ export default function InventoryView() {
             value={make}
             onChange={(e) => {
               setMake(e.target.value);
-              setPage(0);
             }}
           >
             <option value="all">All Makes</option>
@@ -326,7 +314,7 @@ export default function InventoryView() {
           </select>
         </ToolbarGroup>
         <ToolbarGroup label="Condition">
-          <Seg value={cond} options={COND_OPTS} onChange={resetPage(setCond)} />
+          <Seg value={cond} options={COND_OPTS} onChange={setCond} />
         </ToolbarGroup>
         <ToolbarGroup label="Category">
           <select
@@ -334,7 +322,6 @@ export default function InventoryView() {
             value={cat}
             onChange={(e) => {
               setCat(e.target.value);
-              setPage(0);
             }}
           >
             <option value="all">All Categories</option>
@@ -386,12 +373,16 @@ export default function InventoryView() {
         <Kpi
           label="Avg VDP Views / Vehicle"
           value={fmt(safeDiv(totalVdp1, sorted.length))}
-          sub={`${sorted.length} vehicles in view`}
+          sub={`${fmt(sorted.length)} vehicles in view (incl. 0-view)`}
         />
         <Kpi
           label="Vehicles w/ 0 VDP Views"
-          value={zeroView}
-          sub={zeroView > 0 ? 'Consider repricing / photos' : 'All vehicles getting views'}
+          value={fmt(zeroView)}
+          sub={
+            zeroView > 0
+              ? `${fmt(zeroView)} of ${fmt(sorted.length)} · consider photos / pricing`
+              : 'All vehicles getting views'
+          }
         />
       </div>
 
@@ -447,95 +438,79 @@ export default function InventoryView() {
             </span>
           </>
         }
-        sub="Click a column header to sort. Data from get_inventory_performance_advance · smart_final_data"
+        sub="Click a column header to sort. Includes 0-view inventory · get_inventory_performance_advance · smart_final_data"
       >
         <>
-            <table className="vdp-table">
-              <thead>
-                <tr>
-                  {[
-                    ['vin', 'VIN'],
-                    ['make', 'Make'],
-                    ['model', 'Model'],
-                    ['year', 'Year'],
-                    ['condition', 'Cond.'],
-                    ['category', 'Category'],
-                    ['vdp1', 'VDP (Current)'],
-                    ['vdp0', 'VDP (Prior)'],
-                    ['vdpmom', 'MoM %'],
-                    ['uniq1', 'Unique VDP'],
-                  ].map(([k, label]) => (
-                    <th
-                      key={k}
-                      className={`${['vdp1', 'vdp0', 'vdpmom', 'uniq1'].includes(k) ? 'right' : ''} ${sort.k === k ? 'sorted' : ''}`}
-                      onClick={() => onSort(k)}
-                    >
-                      {label}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {pageRows.length === 0 ? (
+            <div className="vdp-table-scroll vdp-table-scroll--15">
+              <table className="vdp-table">
+                <thead>
                   <tr>
-                    <td
-                      colSpan={10}
-                      style={{
-                        textAlign: 'center',
-                        color: 'var(--vdp-muted)',
-                        padding: 20,
-                      }}
-                    >
-                      No vehicles match these filters
-                    </td>
+                    {[
+                      ['vin', 'VIN'],
+                      ['make', 'Make'],
+                      ['model', 'Model'],
+                      ['year', 'Year'],
+                      ['condition', 'Cond.'],
+                      ['category', 'Category'],
+                      ['vdp1', 'VDP (Current)'],
+                      ['vdp0', 'VDP (Prior)'],
+                      ['vdpmom', 'MoM %'],
+                      ['uniq1', 'Unique VDP'],
+                    ].map(([k, label]) => (
+                      <th
+                        key={k}
+                        className={`${['vdp1', 'vdp0', 'vdpmom', 'uniq1'].includes(k) ? 'right' : ''} ${sort.k === k ? 'sorted' : ''}`}
+                        onClick={() => onSort(k)}
+                      >
+                        {label}
+                      </th>
+                    ))}
                   </tr>
-                ) : (
-                  pageRows.map((r) => (
-                    <tr key={r._key}>
-                      <td className="mono">{r.vin || r.stock || '—'}</td>
-                      <td>{r.make}</td>
-                      <td>{r.model}</td>
-                      <td>{r.year}</td>
-                      <td>
-                        <span className={`vdp-tag ${conditionClass(r.condition)}`}>
-                          {r.condition}
-                        </span>
+                </thead>
+                <tbody>
+                  {sorted.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={10}
+                        style={{
+                          textAlign: 'center',
+                          color: 'var(--vdp-muted)',
+                          padding: 20,
+                        }}
+                      >
+                        No vehicles match these filters
                       </td>
-                      <td>{r.category}</td>
-                      <td className="right mono">{fmt(r.vdp1)}</td>
-                      <td className="right mono">{fmt(r.vdp0)}</td>
-                      <td className={`right vdp-delta ${momClass(r.vdpmom / 100)}`}>
-                        {r.vdp0 < 1 ? (r.vdp1 > 0 ? 'New' : '—') : pct(r.vdpmom)}
-                      </td>
-                      <td className="right mono">{fmt(r.uniq1)}</td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-            <div className="vdp-pager">
-              <span>
-                {sorted.length
-                  ? `Showing ${start + 1}–${Math.min(start + PAGE_SIZE, sorted.length)} of ${sorted.length}`
-                  : ''}
-              </span>
-              <div>
-                <button
-                  type="button"
-                  disabled={page === 0}
-                  onClick={() => setPage((n) => n - 1)}
-                >
-                  ← Prev
-                </button>
-                <button
-                  type="button"
-                  disabled={start + PAGE_SIZE >= sorted.length}
-                  onClick={() => setPage((n) => n + 1)}
-                >
-                  Next →
-                </button>
-              </div>
+                  ) : (
+                    sorted.map((r) => (
+                      <tr key={r._key}>
+                        <td className="mono">{r.vin || r.stock || '—'}</td>
+                        <td>{r.make}</td>
+                        <td>{r.model}</td>
+                        <td>{r.year}</td>
+                        <td>
+                          <span className={`vdp-tag ${conditionClass(r.condition)}`}>
+                            {r.condition}
+                          </span>
+                        </td>
+                        <td>{r.category}</td>
+                        <td className="right mono">{fmt(r.vdp1)}</td>
+                        <td className="right mono">{fmt(r.vdp0)}</td>
+                        <td className={`right vdp-delta ${momClass(r.vdpmom / 100)}`}>
+                          {r.vdp0 < 1 ? (r.vdp1 > 0 ? 'New' : '—') : pct(r.vdpmom)}
+                        </td>
+                        <td className="right mono">{fmt(r.uniq1)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
             </div>
+            {sorted.length > VISIBLE_ROWS && (
+              <div className="vdp-scroll-hint">
+                Showing {VISIBLE_ROWS} of {sorted.length} vehicles — scroll for more
+              </div>
+            )}
           </>
       </Card>
     </div>

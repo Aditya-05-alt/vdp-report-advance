@@ -1394,6 +1394,17 @@
 }
 .vdp-table th:hover { color: var(--vdp-accent); }
 .vdp-table th.sorted { color: var(--vdp-accent); }
+.vdp-table th.vdp-th-sortable {
+  cursor: pointer;
+  user-select: none;
+}
+.vdp-table th.right .vdp-col-sort {
+  justify-content: flex-end;
+  width: 100%;
+}
+.vdp-table th.sorted .vdp-col-sort-label {
+  color: var(--vdp-accent);
+}
 .vdp-table td {
   padding: 8px 10px;
   border-bottom: 1px solid #f1f5f9;

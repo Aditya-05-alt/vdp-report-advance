@@ -34,43 +34,236 @@ function minYmd(a, b) {
   return a <= b ? a : b;
 }
 
+/** Match GA4 session_campaign to Ads campaign.name (spacing around |). */
+function normalizeCampaignKey(name) {
+  return String(name || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s*\|\s*/g, '|')
+    .replace(/\s+/g, ' ');
+}
+
+function emptyCostMaps() {
+  return { byName: new Map(), byNorm: new Map(), source: 'none' };
+}
+
+function addCostRow(maps, name, cost) {
+  const n = String(name || '').trim();
+  if (!n) return;
+  const c = Number(cost) || 0;
+  maps.byName.set(n, (maps.byName.get(n) || 0) + c);
+  const key = normalizeCampaignKey(n);
+  maps.byNorm.set(key, (maps.byNorm.get(key) || 0) + c);
+}
+
+function lookupCampaignCost(maps, campaignName) {
+  const name = String(campaignName || '').trim();
+  if (!name || !maps) return 0;
+  if (maps.byName.has(name)) return maps.byName.get(name) || 0;
+  return maps.byNorm.get(normalizeCampaignKey(name)) || 0;
+}
+
 /**
- * Cost from smart_campaign (Google Ads sync), keyed by campaign name.
- * Prorates cost when report_from/report_to only partially overlaps the UI range.
+ * Attach Ads costs to GA4 campaigns, then append WA Ads campaigns that have
+ * spend in-range but no GA4 views (so table total matches Google Ads).
+ */
+function mergeCampaignsWithCosts(ga4Campaigns, costMaps) {
+  const seen = new Set();
+  const rows = [];
+
+  for (const r of ga4Campaigns || []) {
+    const campaign = String(r.campaign || '(not set)').trim();
+    if (!campaign) continue;
+    seen.add(campaign);
+    seen.add(normalizeCampaignKey(campaign));
+    const cost = lookupCampaignCost(costMaps, campaign);
+    rows.push({
+      campaign,
+      views: Number(r.views) || 0,
+      cost: Math.round(cost * 100) / 100,
+      sessions: Number(r.sessions) || 0,
+      total_users: Number(r.total_users) || 0,
+      new_users: Number(r.new_users) || 0,
+    });
+  }
+
+  for (const [name, cost] of costMaps?.byName || []) {
+    const campaign = String(name || '').trim();
+    if (!campaign) continue;
+    if (!campaign.startsWith('WA|') && !campaign.startsWith('WA |')) continue;
+    const c = Number(cost) || 0;
+    if (c <= 0) continue;
+    if (seen.has(campaign) || seen.has(normalizeCampaignKey(campaign))) continue;
+    seen.add(campaign);
+    seen.add(normalizeCampaignKey(campaign));
+    rows.push({
+      campaign,
+      views: 0,
+      cost: Math.round(c * 100) / 100,
+      sessions: 0,
+      total_users: 0,
+      new_users: 0,
+    });
+  }
+
+  rows.sort((a, b) => b.views - a.views || b.cost - a.cost);
+  const totalViews = rows.reduce((s, r) => s + r.views, 0);
+  return rows.map((r, i) => ({
+    ...r,
+    pct: totalViews > 0 ? Math.round((r.views / totalViews) * 10000) / 100 : 0,
+    rank: i + 1,
+  }));
+}
+
+/**
+ * Resolve Ads customer_id from dealer ga4CustomerId / smart_ga4_config.client_id.
+ */
+async function resolveAdsCustomerId(supabase, clientId) {
+  const cid = String(clientId || '').trim();
+  if (!cid) return null;
+
+  const asNum = Number(cid);
+  if (Number.isFinite(asNum) && asNum > 0) {
+    const byCustomer = await supabase
+      .from('google_ads_accounts')
+      .select('customer_id')
+      .eq('customer_id', asNum)
+      .maybeSingle();
+    if (byCustomer.data?.customer_id != null) {
+      return Number(byCustomer.data.customer_id);
+    }
+  }
+
+  const byClientField = await supabase
+    .from('google_ads_accounts')
+    .select('customer_id')
+    .eq('client_id', cid)
+    .maybeSingle();
+  if (byClientField.data?.customer_id != null) {
+    return Number(byClientField.data.customer_id);
+  }
+
+  const { data: ga4 } = await supabase
+    .from('smart_ga4_config')
+    .select('ga4_property_id')
+    .eq('client_id', cid)
+    .maybeSingle();
+  const propertyId = String(ga4?.ga4_property_id || '').trim();
+  if (!propertyId) {
+    return Number.isFinite(asNum) && asNum > 0 ? asNum : null;
+  }
+
+  const byProp = await supabase
+    .from('google_ads_accounts')
+    .select('customer_id')
+    .eq('ga4_property_id', propertyId)
+    .maybeSingle();
+  if (byProp.data?.customer_id != null) {
+    return Number(byProp.data.customer_id);
+  }
+
+  return Number.isFinite(asNum) && asNum > 0 ? asNum : null;
+}
+
+/**
+ * Cost from day-wise smart_campaign_history only.
+ * Each history row is one campaign × one calendar day (report_from = report_to).
+ * Selected UI from/to → SUM(cost) of those days. Single-day range works the same.
  */
 async function fetchCampaignCosts(supabase, clientId, from, to) {
   const cid = String(clientId || '').trim();
-  if (!cid || !from || !to) return new Map();
+  if (!cid || !from || !to) return emptyCostMaps();
 
-  const asNum = Number(cid);
-  let query = supabase
+  const customerId = await resolveAdsCustomerId(supabase, cid);
+  if (!customerId) return emptyCostMaps();
+
+  const maps = emptyCostMaps();
+  maps.source = 'smart_campaign_history:daily';
+
+  // Prefer RPC so multi-day legacy range rows can never leak into the sum.
+  const { data: rpcRows, error: rpcError } = await supabase.rpc(
+    'get_campaign_costs_daily',
+    {
+      p_customer_id: customerId,
+      p_from: from,
+      p_to: to,
+    }
+  );
+
+  if (!rpcError && Array.isArray(rpcRows)) {
+    for (const row of rpcRows) {
+      addCostRow(maps, row.name, Number(row.cost) || 0);
+    }
+    if (maps.byName.size > 0) return maps;
+  } else if (rpcError) {
+    console.warn(
+      '[campaign-views_advance] get_campaign_costs_daily:',
+      rpcError.message
+    );
+  }
+
+  // Fallback: page history but keep only report_from = report_to days.
+  const pageSize = 1000;
+  let fromIdx = 0;
+  let dailyRows = 0;
+
+  for (;;) {
+    const { data, error } = await supabase
+      .from('smart_campaign_history')
+      .select('name, cost, report_from, report_to')
+      .eq('customer_id', customerId)
+      .eq('platform', 'google')
+      .gte('report_from', from)
+      .lte('report_from', to)
+      .gte('report_to', from)
+      .lte('report_to', to)
+      .order('report_from', { ascending: true })
+      .order('campaign_id', { ascending: true })
+      .range(fromIdx, fromIdx + pageSize - 1);
+
+    if (error) {
+      console.warn(
+        '[campaign-views_advance] smart_campaign_history daily:',
+        error.message
+      );
+      break;
+    }
+    if (!data?.length) break;
+
+    for (const row of data) {
+      const day = ymd(row.report_from);
+      const dayTo = ymd(row.report_to);
+      if (!day || day !== dayTo || day < from || day > to) continue;
+      dailyRows += 1;
+      addCostRow(maps, row.name, Number(row.cost) || 0);
+    }
+
+    if (data.length < pageSize) break;
+    fromIdx += pageSize;
+    if (fromIdx > 100000) break;
+  }
+
+  if (dailyRows > 0) return maps;
+
+  // Temporary fallback until day-wise backfill lands for an account.
+  const { data: legacy, error: legacyErr } = await supabase
     .from('smart_campaign')
-    .select('name, cost, report_from, report_to, customer_id, client_id')
+    .select('name, cost, report_from, report_to')
+    .eq('customer_id', customerId)
     .lte('report_from', to)
     .gte('report_to', from)
     .limit(5000);
+  if (legacyErr || !legacy?.length) return emptyCostMaps();
 
-  if (Number.isFinite(asNum) && asNum > 0) {
-    query = query.or(`customer_id.eq.${asNum},client_id.eq.${cid}`);
-  } else {
-    query = query.eq('client_id', cid);
-  }
-
-  const { data, error } = await query;
-  if (error) {
-    console.warn('[campaign-views_advance] smart_campaign cost:', error.message);
-    return new Map();
-  }
-
-  const byName = new Map();
-  for (const row of data || []) {
+  maps.source = 'smart_campaign:prorated';
+  for (const row of legacy) {
     const name = String(row.name || '').trim();
     if (!name) continue;
     const reportFrom = ymd(row.report_from);
     const reportTo = ymd(row.report_to);
     const fullCost = Number(row.cost) || 0;
-    if (!reportFrom || !reportTo || fullCost === 0) {
-      byName.set(name, (byName.get(name) || 0) + fullCost);
+    if (!reportFrom || !reportTo) {
+      addCostRow(maps, name, fullCost);
       continue;
     }
     const overlapFrom = maxYmd(from, reportFrom);
@@ -81,9 +274,9 @@ async function fetchCampaignCosts(supabase, clientId, from, to) {
       reportDays > 0 && overlapDays > 0
         ? fullCost * (overlapDays / reportDays)
         : 0;
-    byName.set(name, (byName.get(name) || 0) + share);
+    addCostRow(maps, name, share);
   }
-  return byName;
+  return maps;
 }
 
 /** Fallback when cells RPC / jsonb cells are missing — aggregate page rows in Node. */
@@ -175,7 +368,7 @@ export async function GET(request) {
   });
 
   try {
-    const [mainRes, cellsRes, costMap] = await Promise.all([
+    const [mainRes, cellsRes, costSettled] = await Promise.all([
       supabase.rpc('get_wa_campaign_views_advance', {
         p_client_id: clientId,
         p_from: from,
@@ -188,8 +381,15 @@ export async function GET(request) {
         p_to: to,
         p_page_type: pageType,
       }),
-      fetchCampaignCosts(supabase, clientId, from, to),
+      fetchCampaignCosts(supabase, clientId, from, to).catch((err) => {
+        console.warn(
+          '[campaign-views_advance] cost fetch failed:',
+          err?.message || err
+        );
+        return emptyCostMaps();
+      }),
     ]);
+    const costMaps = costSettled || emptyCostMaps();
 
     if (mainRes.error) {
       const message = mainRes.error.message || 'get_wa_campaign_views_advance failed';
@@ -232,31 +432,19 @@ export async function GET(request) {
     }
 
     return NextResponse.json({
-      campaigns: campaigns.map((r, i) => {
-        const campaign = String(r.campaign || '(not set)').trim();
-        const cost = costMap.get(campaign) || 0;
-        return {
-          campaign,
-          views: Number(r.views) || 0,
-          cost: Math.round(cost * 100) / 100,
-          sessions: Number(r.sessions) || 0,
-          total_users: Number(r.total_users) || 0,
-          new_users: Number(r.new_users) || 0,
-          pct: Number(r.pct) || 0,
-          rank: Number(r.rank) || i + 1,
-        };
-      }),
+      campaigns: mergeCampaignsWithCosts(campaigns, costMaps),
       daily,
       cells,
       meta: {
         ...(payload.meta && typeof payload.meta === 'object' ? payload.meta : {}),
         source: 'get_wa_campaign_views_advance',
-        costSource: 'smart_campaign',
+        costSource: costMaps?.source || 'none',
         cellsSource,
         pageType,
         clientId,
         dealerScoped: true,
         prefix: 'WA| / WA |',
+        costIncludesAdsOnly: true,
       },
     });
   } catch (err) {

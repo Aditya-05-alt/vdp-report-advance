@@ -31,14 +31,14 @@ function fmtCost(n) {
   })}`;
 }
 
-/** Views (or VDP views) per $1 of spend. */
-function viewsPerCost(views, cost) {
-  const c = Number(cost) || 0;
-  if (c <= 0) return null;
-  return (Number(views) || 0) / c;
+/** Cost per view (or per VDP view). */
+function costPerView(views, cost) {
+  const v = Number(views) || 0;
+  if (v <= 0) return null;
+  return (Number(cost) || 0) / v;
 }
 
-function fmtViewsPerCost(n) {
+function fmtCostPerView(n) {
   if (n == null || !Number.isFinite(n)) return '—';
   return `$${n.toLocaleString('en-US', {
     minimumFractionDigits: 2,
@@ -69,7 +69,7 @@ function aggregateByCampaign(rows) {
   const total = sorted.reduce((s, r) => s + r.views, 0);
   return sorted.map((r, i) => ({
     ...r,
-    viewsPerCost: viewsPerCost(r.views, r.cost),
+    costPerView: costPerView(r.views, r.cost),
     rank: i + 1,
     pct: total > 0 ? Math.round((r.views / total) * 10000) / 100 : 0,
   }));
@@ -170,9 +170,7 @@ export default function CampaignsView() {
 
     setLoading(true);
     setError(null);
-    setCampaigns([]);
-    setDaily([]);
-    setCells([]);
+    // Keep previous rows visible while the new range loads (avoid flashing zeros).
 
     try {
       const data = await fetchCampaignViews({
@@ -279,8 +277,8 @@ export default function CampaignsView() {
         views0,
         cost,
         cost0,
-        viewsPerCost: viewsPerCost(views, cost),
-        viewsPerCost0: viewsPerCost(views0, cost0),
+        costPerView: costPerView(views, cost),
+        costPerView0: costPerView(views0, cost0),
         sessions: cur?.sessions || 0,
         total_users: cur?.total_users || 0,
         new_users: cur?.new_users || 0,
@@ -506,9 +504,9 @@ export default function CampaignsView() {
   );
   const topCampaign = byCampaign[0] || null;
   const pageLabel = pageType === 'VDP' ? 'VDP Views' : 'Page Views';
-  const efficiencyLabel = pageType === 'VDP' ? 'VDP / Cost' : 'Page / Cost';
-  const totalViewsPerCost = viewsPerCost(totalViews, totalCost);
-  const priorTotalViewsPerCost = viewsPerCost(priorTotalViews, priorTotalCost);
+  const efficiencyLabel = pageType === 'VDP' ? 'Cost / VDP' : 'Cost / Page';
+  const totalCostPerView = costPerView(totalViews, totalCost);
+  const priorTotalCostPerView = costPerView(priorTotalViews, priorTotalCost);
 
   const campaignLineData = useMemo(() => {
     const ordered = [...(daily || [])]
@@ -773,10 +771,10 @@ export default function CampaignsView() {
                           ['campaign', 'Session Campaign'],
                           ['views', `${pageLabel} (Current)`],
                           ['cost', 'Cost (Current)'],
-                          ['viewsPerCost', `${efficiencyLabel} (Current)`],
+                          ['costPerView', `${efficiencyLabel} (Current)`],
                           ['views0', `${pageLabel} (Prior)`],
                           ['cost0', 'Cost (Prior)'],
-                          ['viewsPerCost0', `${efficiencyLabel} (Prior)`],
+                          ['costPerView0', `${efficiencyLabel} (Prior)`],
                           ['deltaPct', comparePctLabel],
                           ['pct', '% of Total'],
                         ]
@@ -784,7 +782,7 @@ export default function CampaignsView() {
                           ['campaign', 'Session Campaign'],
                           ['views', pageLabel],
                           ['cost', 'Cost'],
-                          ['viewsPerCost', efficiencyLabel],
+                          ['costPerView', efficiencyLabel],
                           ['pct', '% of Total'],
                         ]
                     ).map(([k, label]) => (
@@ -807,14 +805,14 @@ export default function CampaignsView() {
                       <td className="right mono">{fmt(r.views)}</td>
                       <td className="right mono">{fmtCost(r.cost)}</td>
                       <td className="right mono">
-                        {fmtViewsPerCost(r.viewsPerCost)}
+                        {fmtCostPerView(r.costPerView)}
                       </td>
                       {detailCompareActive ? (
                         <>
                           <td className="right mono">{fmt(r.views0 || 0)}</td>
                           <td className="right mono">{fmtCost(r.cost0)}</td>
                           <td className="right mono">
-                            {fmtViewsPerCost(r.viewsPerCost0)}
+                            {fmtCostPerView(r.costPerView0)}
                           </td>
                           <td
                             className={`right vdp-delta ${momClass(
@@ -839,14 +837,14 @@ export default function CampaignsView() {
                     <td className="right mono">{fmt(totalViews)}</td>
                     <td className="right mono">{fmtCost(totalCost)}</td>
                     <td className="right mono">
-                      {fmtViewsPerCost(totalViewsPerCost)}
+                      {fmtCostPerView(totalCostPerView)}
                     </td>
                     {detailCompareActive ? (
                       <>
                         <td className="right mono">{fmt(priorTotalViews)}</td>
                         <td className="right mono">{fmtCost(priorTotalCost)}</td>
                         <td className="right mono">
-                          {fmtViewsPerCost(priorTotalViewsPerCost)}
+                          {fmtCostPerView(priorTotalCostPerView)}
                         </td>
                         <td
                           className={`right vdp-delta ${momClass(

@@ -270,11 +270,14 @@ export default function InventoryView() {
     []
   );
 
-  const onSort = (k) => {
-    setSort((prev) => ({
-      k,
-      dir: prev.k === k ? -prev.dir : -1,
-    }));
+  const onSort = (k, dir) => {
+    setSort((prev) => {
+      if (dir === 1 || dir === -1) return { k, dir };
+      return {
+        k,
+        dir: prev.k === k ? -prev.dir : -1,
+      };
+    });
   };
 
   const isBusy = dealersLoading || loading;
@@ -438,7 +441,7 @@ export default function InventoryView() {
             </span>
           </>
         }
-        sub="Click a column header to sort. Includes 0-view inventory · get_inventory_performance_advance · smart_final_data"
+        sub="Use header sort buttons. Includes 0-view inventory · get_inventory_performance_advance · smart_final_data"
       >
         <>
             <div className="vdp-table-scroll vdp-table-scroll--15">
@@ -456,15 +459,47 @@ export default function InventoryView() {
                       ['vdp0', 'VDP (Prior)'],
                       ['vdpmom', 'MoM %'],
                       ['uniq1', 'Unique VDP'],
-                    ].map(([k, label]) => (
-                      <th
-                        key={k}
-                        className={`${['vdp1', 'vdp0', 'vdpmom', 'uniq1'].includes(k) ? 'right' : ''} ${sort.k === k ? 'sorted' : ''}`}
-                        onClick={() => onSort(k)}
-                      >
-                        {label}
-                      </th>
-                    ))}
+                    ].map(([k, label]) => {
+                      const active = sort.k === k;
+                      const isRight = ['vdp1', 'vdp0', 'vdpmom', 'uniq1'].includes(k);
+                      return (
+                        <th
+                          key={k}
+                          className={`vdp-th-sortable ${isRight ? 'right' : ''} ${
+                            active ? 'sorted' : ''
+                          }`}
+                          onClick={() => onSort(k)}
+                        >
+                          <div className="vdp-col-sort">
+                            <span className="vdp-col-sort-label">{label}</span>
+                            <span className="vdp-col-sort-arrows" aria-hidden="true">
+                              <button
+                                type="button"
+                                className={active && sort.dir === 1 ? 'active' : ''}
+                                aria-label={`Sort ${label} low to high`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onSort(k, 1);
+                                }}
+                              >
+                                ▲
+                              </button>
+                              <button
+                                type="button"
+                                className={active && sort.dir === -1 ? 'active' : ''}
+                                aria-label={`Sort ${label} high to low`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onSort(k, -1);
+                                }}
+                              >
+                                ▼
+                              </button>
+                            </span>
+                          </div>
+                        </th>
+                      );
+                    })}
                   </tr>
                 </thead>
                 <tbody>

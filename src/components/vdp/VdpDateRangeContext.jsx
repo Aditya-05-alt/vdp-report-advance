@@ -45,10 +45,16 @@ export function VdpDateRangeProvider({ children }) {
 
   useEffect(() => {
     try {
-      window.sessionStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify(VDP_DEFAULT_DATE_RANGE)
-      );
+      // Restore last selected range (do NOT reset to current_month every mount).
+      const storedRange = readJson(STORAGE_KEY, null);
+      if (storedRange != null) {
+        setDateRangeState(storedRange);
+      } else {
+        window.sessionStorage.setItem(
+          STORAGE_KEY,
+          JSON.stringify(VDP_DEFAULT_DATE_RANGE)
+        );
+      }
       const storedEnabled = readJson(COMPARE_ENABLED_KEY, true);
       setCompareEnabledState(storedEnabled !== false);
       const storedCompare = readJson(COMPARE_RANGE_KEY, null);

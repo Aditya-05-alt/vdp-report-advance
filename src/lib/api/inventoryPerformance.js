@@ -71,6 +71,7 @@ async function fetchPeriod({
   category,
   search,
   channel,
+  lite = false,
   onCancelCheck,
 }) {
   const qs = new URLSearchParams({
@@ -87,6 +88,8 @@ async function fetchPeriod({
   if (catCsv) qs.set('category', catCsv);
   if (search) qs.set('search', search);
   if (channelCsv) qs.set('channel', channelCsv);
+  // Prior / dropdown fetches only need vehicle views — skip age + channel work.
+  if (lite) qs.set('lite', '1');
 
   const res = await fetch(`/api/dashboard/inventory-performance?${qs}`, {
     credentials: 'same-origin',
@@ -146,6 +149,7 @@ export async function fetchInventoryPerformance({
           from: priorFrom,
           to: priorTo,
           ...filterOpts,
+          lite: true,
           onCancelCheck,
         })
       : Promise.resolve({ rows: [], channels: [] }),
@@ -164,6 +168,7 @@ export async function fetchInventoryPerformance({
           category: [],
           search: '',
           channel: [],
+          lite: true,
           onCancelCheck,
         })
       : null,

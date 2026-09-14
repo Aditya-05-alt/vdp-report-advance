@@ -174,12 +174,6 @@ function ageLookupKeys(vin, stock) {
   return keys;
 }
 
-function chunkList(arr, size) {
-  const out = [];
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-  return out;
-}
-
 /**
  * Merge first/last seen for VIN/stock keys.
  * Accepts hoot/scrap (vin, stock_number, first_seen, last_seen) or final_data
@@ -205,6 +199,43 @@ function mergeAgeRow(byKey, row) {
   }
 }
 
+/** Paginate a PostgREST query (default max_rows is often 1000). */
+async function fetchPaged(buildQuery, { pageSize = 1000, maxRows = 12000 } = {}) {
+  const rows = [];
+  // First page
+  {
+    const { data, error } = await buildQuery().range(0, pageSize - 1);
+    if (error) return { data: rows, error };
+    const batch = data || [];
+    rows.push(...batch);
+    if (batch.length < pageSize) return { data: rows, error: null };
+  }
+
+  // Remaining pages in parallel waves (much faster for big dealers).
+  let from = pageSize;
+  while (from < maxRows) {
+    const starts = [];
+    for (let i = 0; i < 4 && from + i * pageSize < maxRows; i++) {
+      starts.push(from + i * pageSize);
+    }
+    const parts = await Promise.all(
+      starts.map((start) =>
+        buildQuery().range(start, Math.min(start + pageSize - 1, maxRows - 1))
+      )
+    );
+    let short = false;
+    for (const { data, error } of parts) {
+      if (error) return { data: rows, error };
+      const batch = data || [];
+      rows.push(...batch);
+      if (batch.length < pageSize) short = true;
+    }
+    if (short) break;
+    from += starts.length * pageSize;
+  }
+  return { data: rows, error: null };
+}
+
 /** Live on-lot keys + which ones were synced/updated today. */
 async function fetchLiveAgeKeys(supabase, clientId) {
   const liveKeys = new Set();
@@ -213,11 +244,12 @@ async function fetchLiveAgeKeys(supabase, clientId) {
   if (!cid) return { liveKeys, updatedTodayKeys };
 
   const asOf = todayYmd();
-  const { data, error } = await supabase
-    .from('smart_hoot_inventory_live')
-    .select('vin, stock_number, synced_at')
-    .eq('ga4_customer_id', cid)
-    .limit(8000);
+  const { data, error } = await fetchPaged(() =>
+    supabase
+      .from('smart_hoot_inventory_live')
+      .select('vin, stock_number, synced_at')
+      .eq('ga4_customer_id', cid)
+  );
 
   if (error) {
     console.warn(
@@ -232,93 +264,22 @@ async function fetchLiveAgeKeys(supabase, clientId) {
     const syncedDay = ymd(row.synced_at);
     for (const key of keys) {
       liveKeys.add(key);
-      // Live row present ⇒ treated as updated today when sync day is today
-      // (or missing synced_at — feed is the current snapshot).
       if (!syncedDay || syncedDay === asOf) updatedTodayKeys.add(key);
     }
   }
   return { liveKeys, updatedTodayKeys };
 }
 
-async function fetchRowsByVinOrStock(
-  supabase,
-  table,
-  select,
-  idColumn,
-  idValue,
-  vins,
-  stocks
-) {
-  const rows = [];
-  for (const chunk of chunkList(vins, 150)) {
-    if (!chunk.length) continue;
-    const { data, error } = await supabase
-      .from(table)
-      .select(select)
-      .eq(idColumn, idValue)
-      .in('vin', chunk)
-      .limit(5000);
-    if (error) {
-      console.warn(
-        `[inventory-performance-advance] ${table} vin age:`,
-        error.message
-      );
-      break;
-    }
-    rows.push(...(data || []));
-  }
-  for (const chunk of chunkList(stocks, 150)) {
-    if (!chunk.length) continue;
-    const { data, error } = await supabase
-      .from(table)
-      .select(select)
-      .eq(idColumn, idValue)
-      .in('stock_number', chunk)
-      .limit(5000);
-    if (error) {
-      console.warn(
-        `[inventory-performance-advance] ${table} stock age:`,
-        error.message
-      );
-      break;
-    }
-    rows.push(...(data || []));
-  }
-  return rows;
-}
-
 /**
- * Age map for inventory rows:
- * 1) smart_final_data inv_first_seen/inv_last_seen (same source as vehicle link)
- * 2) hoot + scrap history for the VIN/stock (chunked — no 8k truncation)
- * 3) live on-lot extends last_seen → today
- * 4) live / identified vehicle with no history → 1d (never blank)
+ * Age map — dealer-scoped queries (not per-VIN chunks).
+ * 1) smart_final_data dates in the selected range (link source)
+ * 2) hoot + scrap inventory history for the dealer
+ * 3) live on-lot extends last_seen → today; updated today → min 2d
  */
-async function fetchAgeDaysMap(supabase, clientId, inventoryRows) {
+async function fetchAgeDaysMap(supabase, clientId, from, to) {
   const byKey = new Map();
   const cid = trimStr(clientId);
   if (!cid) return byKey;
-
-  const vins = [];
-  const stocks = [];
-  const seenVin = new Set();
-  const seenStock = new Set();
-  for (const r of inventoryRows || []) {
-    const vin = trimStr(r.inv_vin);
-    const stock = trimStr(r.inv_stock_number);
-    if (
-      vin &&
-      vin.toLowerCase() !== 'unassigned' &&
-      !seenVin.has(vin.toLowerCase())
-    ) {
-      seenVin.add(vin.toLowerCase());
-      vins.push(vin);
-    }
-    if (stock && !seenStock.has(stock.toLowerCase())) {
-      seenStock.add(stock.toLowerCase());
-      stocks.push(stock);
-    }
-  }
 
   const { data: cfg } = await supabase
     .from('smart_hoot_config')
@@ -328,108 +289,66 @@ async function fetchAgeDaysMap(supabase, clientId, inventoryRows) {
     .maybeSingle();
   const dealerName = trimStr(cfg?.customer_name);
 
-  const liveKeysPromise = fetchLiveAgeKeys(supabase, cid);
-
-  const finalRows = [];
-  for (const chunk of chunkList(vins, 150)) {
-    if (!chunk.length) continue;
-    const { data, error } = await supabase
-      .from('smart_final_data')
-      .select(
-        'inv_vin, inv_stock_number, inv_first_seen, inv_last_seen, report_date'
-      )
-      .eq('client_id', cid)
-      .in('inv_vin', chunk)
-      .limit(8000);
-    if (error) {
-      console.warn(
-        '[inventory-performance-advance] final age vin:',
-        error.message
-      );
-      break;
-    }
-    finalRows.push(...(data || []));
-  }
-  for (const chunk of chunkList(stocks, 150)) {
-    if (!chunk.length) continue;
-    const { data, error } = await supabase
-      .from('smart_final_data')
-      .select(
-        'inv_vin, inv_stock_number, inv_first_seen, inv_last_seen, report_date'
-      )
-      .eq('client_id', cid)
-      .in('inv_stock_number', chunk)
-      .limit(8000);
-    if (error) {
-      console.warn(
-        '[inventory-performance-advance] final age stock:',
-        error.message
-      );
-      break;
-    }
-    finalRows.push(...(data || []));
-  }
-
-  const [scrapRows, liveInfo, hootRows] = await Promise.all([
-    fetchRowsByVinOrStock(
-      supabase,
-      'smart_scrap_inventory',
-      'vin, stock_number, first_seen, last_seen',
-      'customer_id',
-      cid,
-      vins,
-      stocks
+  const [finalRes, scrapRes, liveInfo, hootRes] = await Promise.all([
+    fetchPaged(
+      () =>
+        supabase
+          .from('smart_final_data')
+          .select(
+            'inv_vin, inv_stock_number, inv_first_seen, inv_last_seen, report_date'
+          )
+          .eq('client_id', cid)
+          .gte('report_date', from)
+          .lte('report_date', to),
+      { maxRows: 20000 }
     ),
-    liveKeysPromise,
-    (async () => {
-      if (!dealerName || (!vins.length && !stocks.length)) return [];
-      const rows = [];
-      for (const chunk of chunkList(vins, 150)) {
-        if (!chunk.length) continue;
-        const { data, error } = await supabase
-          .from('smart_hoot_inventory')
+    fetchPaged(
+      () =>
+        supabase
+          .from('smart_scrap_inventory')
           .select('vin, stock_number, first_seen, last_seen')
-          .ilike('customer_name', dealerName)
-          .in('vin', chunk)
-          .limit(5000);
-        if (error) {
-          console.warn(
-            '[inventory-performance-advance] hoot age vin:',
-            error.message
-          );
-          break;
-        }
-        rows.push(...(data || []));
-      }
-      for (const chunk of chunkList(stocks, 150)) {
-        if (!chunk.length) continue;
-        const { data, error } = await supabase
-          .from('smart_hoot_inventory')
-          .select('vin, stock_number, first_seen, last_seen')
-          .ilike('customer_name', dealerName)
-          .in('stock_number', chunk)
-          .limit(5000);
-        if (error) {
-          console.warn(
-            '[inventory-performance-advance] hoot age stock:',
-            error.message
-          );
-          break;
-        }
-        rows.push(...(data || []));
-      }
-      return rows;
-    })(),
+          .eq('customer_id', cid),
+      { maxRows: 12000 }
+    ),
+    fetchLiveAgeKeys(supabase, cid),
+    dealerName
+      ? fetchPaged(
+          () =>
+            supabase
+              .from('smart_hoot_inventory')
+              .select('vin, stock_number, first_seen, last_seen')
+              .ilike('customer_name', dealerName),
+          { maxRows: 12000 }
+        )
+      : Promise.resolve({ data: [], error: null }),
   ]);
+
+  if (finalRes.error) {
+    console.warn(
+      '[inventory-performance-advance] final age:',
+      finalRes.error.message
+    );
+  }
+  if (scrapRes.error) {
+    console.warn(
+      '[inventory-performance-advance] scrap age:',
+      scrapRes.error.message
+    );
+  }
+  if (hootRes.error) {
+    console.warn(
+      '[inventory-performance-advance] hoot age:',
+      hootRes.error.message
+    );
+  }
 
   const { liveKeys, updatedTodayKeys } = liveInfo;
 
-  for (const row of finalRows) mergeAgeRow(byKey, row);
-  for (const row of hootRows) mergeAgeRow(byKey, row);
-  for (const row of scrapRows) mergeAgeRow(byKey, row);
+  for (const row of finalRes.data || []) mergeAgeRow(byKey, row);
+  for (const row of hootRes.data || []) mergeAgeRow(byKey, row);
+  for (const row of scrapRes.data || []) mergeAgeRow(byKey, row);
 
   const asOf = todayYmd();
-  // Hoot/scrap last_seen today also counts as updated today.
   for (const [key, span] of byKey) {
     if (span.last === asOf) updatedTodayKeys.add(key);
   }
@@ -453,19 +372,16 @@ async function fetchAgeDaysMap(supabase, clientId, inventoryRows) {
     }
     let days = ageDaysFromSeen(span.first, last);
     if (days == null) continue;
-    // Updated today → never show 1d; keep age > 1.
     if (updatedTodayKeys.has(key) && days <= 1) days = 2;
     ageByKey.set(key, days);
   }
 
   for (const key of liveKeys) {
     if (!ageByKey.has(key)) {
-      // Live / updated today with no history → 2d (not 1d).
       ageByKey.set(key, updatedTodayKeys.has(key) ? 2 : 1);
     }
   }
 
-  // Stash updated-today set for attachAgeDays fallbacks.
   ageByKey._updatedTodayKeys = updatedTodayKeys;
   return ageByKey;
 }
@@ -486,7 +402,6 @@ function attachAgeDays(rows, ageByKey) {
       const days = ageByKey.get(key);
       if (age == null || days > age) age = days;
     }
-    // Identified vehicle with VDP/link but no feed history — never blank.
     if (age == null && keys.length) age = updatedToday ? 2 : 1;
     else if (updatedToday && age != null && age <= 1) age = 2;
     return { ...r, age_days: age };
@@ -504,31 +419,6 @@ function displayChannelName(raw) {
     .split(' ')
     .map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1) : w))
     .join(' ');
-}
-
-async function fetchChannelOptions(supabase, clientId, from, to) {
-  const { data, error } = await supabase
-    .from('smart_ga4_page_data')
-    .select('channel')
-    .eq('client_id', clientId)
-    .gte('report_date', from)
-    .lte('report_date', to)
-    .or('vdp_conditions.eq.true,ga4_page_type.ilike.VDP%')
-    .not('channel', 'is', null)
-    .neq('channel', '')
-    .limit(8000);
-
-  if (error) {
-    console.warn('[inventory-performance-advance] channels:', error.message);
-    return [];
-  }
-
-  const set = new Set();
-  for (const row of data || []) {
-    const name = displayChannelName(row.channel);
-    if (name) set.add(name);
-  }
-  return [...set].sort((a, b) => a.localeCompare(b));
 }
 
 function listParam(raw) {
@@ -560,6 +450,10 @@ export async function GET(request) {
   const category = listParam(searchParams.get('category'));
   const search = searchParams.get('search')?.trim() || null;
   const channel = channelListParam(searchParams.get('channel'));
+  // lite = views only (prior period / filter option lists) — skip age + channels.
+  const lite =
+    searchParams.get('lite') === '1' ||
+    searchParams.get('lite') === 'true';
 
   if (!clientId || !from || !to) {
     return NextResponse.json(
@@ -581,17 +475,53 @@ export async function GET(request) {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
-  const [rpcRes, channelMatrixRes, channels] = await Promise.all([
-    supabase.rpc('get_inventory_performance_advance', {
-      p_client_id: clientId,
-      p_from: from,
-      p_to: to,
-      p_make: make,
-      p_condition: condition,
-      p_category: category,
-      p_search: search || null,
-      p_channel: channel,
-    }),
+  const rpcPromise = supabase.rpc('get_inventory_performance_advance', {
+    p_client_id: clientId,
+    p_from: from,
+    p_to: to,
+    p_make: make,
+    p_condition: condition,
+    p_category: category,
+    p_search: search || null,
+    p_channel: channel,
+  });
+
+  if (lite) {
+    const { data, error } = await rpcPromise;
+    if (error) {
+      console.error('[inventory-performance-advance]', error.message);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    let rows = data ?? [];
+    if (needsVinEnrichment(rows)) {
+      const vinByStock = await lookupVinByStock(
+        supabase,
+        clientId,
+        rows.map((r) => r.inv_stock_number)
+      );
+      rows = rows.map((r) => {
+        const stock = trimStr(r.inv_stock_number);
+        const vin =
+          trimStr(r.inv_vin) || vinByStock.get(stock) || stock || '';
+        return {
+          ...r,
+          inv_vin: vin || null,
+          inv_stock_number: stock || null,
+        };
+      });
+    }
+    rows = rows.map((r) =>
+      normalizeOutputRow({
+        ...r,
+        age_days: null,
+        channel_views: {},
+      })
+    );
+    return NextResponse.json({ rows, channels: [], channelColumns: [] });
+  }
+
+  const [rpcRes, channelMatrixRes, ageByKey] = await Promise.all([
+    rpcPromise,
     supabase.rpc('get_inventory_channel_matrix_advance', {
       p_client_id: clientId,
       p_from: from,
@@ -601,7 +531,7 @@ export async function GET(request) {
       p_category: category,
       p_search: search || null,
     }),
-    fetchChannelOptions(supabase, clientId, from, to),
+    fetchAgeDaysMap(supabase, clientId, from, to),
   ]);
 
   if (rpcRes.error) {
@@ -621,7 +551,6 @@ export async function GET(request) {
     channelMatrixRes.data || []
   );
 
-  // Older deployed RPC may omit stock / leave VIN null — enrich + always coalesce.
   if (needsVinEnrichment(rows)) {
     const vinByStock = await lookupVinByStock(
       supabase,
@@ -640,9 +569,11 @@ export async function GET(request) {
     });
   }
 
-  const ageByKey = await fetchAgeDaysMap(supabase, clientId, rows);
   rows = attachChannelViews(rows, channelByKey);
   rows = attachAgeDays(rows, ageByKey).map(normalizeOutputRow);
+
+  // Channel filter options = columns with traffic (no extra GA4 scan).
+  const channels = channelColumns.slice().sort((a, b) => a.localeCompare(b));
 
   return NextResponse.json({ rows, channels, channelColumns });
 }

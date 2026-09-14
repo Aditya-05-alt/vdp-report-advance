@@ -3,16 +3,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useClient } from '@/components/dashboard/ClientContext';
 import { fetchInventoryPerformance } from '@/lib/api/inventoryPerformance';
-import { fmt, pct, momClass, safeDiv } from '@/lib/vdp/aggregates';
+import { colorForChannel } from '@/lib/ga4/channelDisplay';
+import { fmt, safeDiv } from '@/lib/vdp/aggregates';
 import { isAllDealerClient } from '@/lib/dashboard/allDealers';
 import VdpChart from './VdpChart';
 import { VdpLoadingCard } from './VdpLoadingBanner';
 import { useVdpDateRange } from './VdpDateRangeContext';
 import { useSoftLoadPercent } from './useSoftLoadPercent';
-import { Card, Kpi, Seg, Toolbar, ToolbarGroup } from './VdpUi';
+import { Card, Kpi, Toolbar, ToolbarGroup, VdpMultiFilter } from './VdpUi';
 
 const COND_OPTS = [
-  { value: 'all', label: 'All' },
   { value: 'New', label: 'New' },
   { value: 'Used', label: 'Used' },
 ];
@@ -26,6 +26,19 @@ function conditionClass(condition) {
   return 'used';
 }
 
+/** Days on lot (first_seen → last_seen; still-live units count through today). */
+function fmtAge(age) {
+  return age == null ? '—' : `${age}d`;
+}
+
+function channelSortValue(row, key) {
+  if (String(key).startsWith('ch:')) {
+    const name = String(key).slice(3);
+    return Number(row.channelViews?.[name]) || 0;
+  }
+  return row[key];
+}
+
 export default function InventoryView() {
   const { client, loading: dealersLoading, isAllDealer } = useClient();
   const {
@@ -36,15 +49,18 @@ export default function InventoryView() {
     curLabel,
     priLabel,
   } = useVdpDateRange();
-  const [make, setMake] = useState('all');
-  const [cond, setCond] = useState('all');
-  const [cat, setCat] = useState('all');
+  const [makes, setMakes] = useState([]);
+  const [conds, setConds] = useState([]);
+  const [cats, setCats] = useState([]);
+  const [channels, setChannels] = useState([]);
   const [search, setSearch] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [sort, setSort] = useState({ k: 'vdp1', dir: -1 });
   const [rows, setRows] = useState([]);
   const [makeOptions, setMakeOptions] = useState([]);
   const [catOptions, setCatOptions] = useState([]);
+  const [channelOptions, setChannelOptions] = useState([]);
+  const [channelColumns, setChannelColumns] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const cancelRef = useRef(false);
@@ -59,6 +75,8 @@ export default function InventoryView() {
       setRows([]);
       setMakeOptions([]);
       setCatOptions([]);
+      setChannelOptions([]);
+      setChannelColumns([]);
       return;
     }
 
@@ -77,9 +95,10 @@ export default function InventoryView() {
         to: curTo,
         priorFrom: priFrom,
         priorTo: priTo,
-        make,
-        condition: cond,
-        category: cat,
+        make: makes,
+        condition: conds,
+        category: cats,
+        channel: channels,
         search,
         onCancelCheck: () => isStale(),
       });
@@ -87,6 +106,8 @@ export default function InventoryView() {
       setRows(result.rows || []);
       setMakeOptions(result.makes || []);
       setCatOptions(result.categories || []);
+      setChannelOptions(result.channels || []);
+      setChannelColumns(result.channelColumns || []);
     } catch (err) {
       if (!isStale()) {
         setError(err?.message || 'Failed to load inventory performance.');
@@ -95,7 +116,7 @@ export default function InventoryView() {
     } finally {
       if (!isStale()) setLoading(false);
     }
-  }, [canLoad, ga4Id, curFrom, curTo, priFrom, priTo, make, cond, cat, search]);
+  }, [canLoad, ga4Id, curFrom, curTo, priFrom, priTo, makes, conds, cats, channels, search]);
 
   useEffect(() => {
     if (dealersLoading) return undefined;
@@ -118,43 +139,97 @@ export default function InventoryView() {
   const sorted = useMemo(() => {
     const list = [...rows];
     list.sort((a, b) => {
-      const av = a[sort.k];
-      const bv = b[sort.k];
-      if (typeof av === 'string') return av.localeCompare(bv) * sort.dir;
-      return (av - bv) * sort.dir;
+      const av = channelSortValue(a, sort.k);
+      const bv = channelSortValue(b, sort.k);
+      if (typeof av === 'string' || typeof bv === 'string') {
+        return String(av ?? '').localeCompare(String(bv ?? '')) * sort.dir;
+      }
+      const an = av == null || Number.isNaN(Number(av)) ? null : Number(av);
+      const bn = bv == null || Number.isNaN(Number(bv)) ? null : Number(bv);
+      if (an == null && bn == null) return 0;
+      if (an == null) return 1;
+      if (bn == null) return -1;
+      return (an - bn) * sort.dir;
     });
     return list;
   }, [rows, sort]);
 
+  /** When Channel filter is set, show those columns; else all with traffic. */
+  const visibleChannelColumns = useMemo(() => {
+    if (channels.length > 0) {
+      const selected = new Set(channels.map((c) => String(c)));
+      const fromSelected = channelColumns.filter((c) => selected.has(c));
+      // Keep any selected channels missing from traffic list (show as 0s).
+      for (const c of channels) {
+        if (!fromSelected.includes(c)) fromSelected.push(c);
+      }
+      return fromSelected;
+    }
+    return channelColumns;
+  }, [channelColumns, channels]);
+
+  const baseColumns = useMemo(
+    () => [
+      ['vin', 'VIN'],
+      ['make', 'Make'],
+      ['model', 'Model'],
+      ['year', 'Year'],
+      ['condition', 'Cond.'],
+      ['age', 'Age'],
+      ['category', 'Category'],
+      ['vdp1', 'VDP (Current)'],
+    ],
+    []
+  );
+
+  const tableColumns = useMemo(
+    () => [
+      ...baseColumns,
+      ...visibleChannelColumns.map((name) => [`ch:${name}`, name]),
+    ],
+    [baseColumns, visibleChannelColumns]
+  );
+
   const totalVdp1 = sorted.reduce((s, r) => s + r.vdp1, 0);
   const totalVdp0 = sorted.reduce((s, r) => s + r.vdp0, 0);
-  const totalUniq = sorted.reduce((s, r) => s + r.uniq1, 0);
   const zeroView = sorted.filter((r) => r.vdp1 < 1).length;
 
-  const makeNames = useMemo(() => {
-    const fromRows = [...new Set(sorted.map((r) => r.make))];
-    return (makeOptions.length ? makeOptions : fromRows).slice(0, 12);
-  }, [sorted, makeOptions]);
-
   const makeData = useMemo(() => {
-    const newByMake = makeNames.map((m) =>
-      sorted
-        .filter((r) => r.make === m && String(r.condition).toLowerCase().startsWith('new'))
-        .reduce((s, r) => s + r.vdp1, 0)
-    );
-    const usedByMake = makeNames.map((m) =>
-      sorted
-        .filter((r) => r.make === m && String(r.condition).toLowerCase().startsWith('used'))
-        .reduce((s, r) => s + r.vdp1, 0)
-    );
+    const byMake = new Map();
+    for (const r of sorted) {
+      const name = r.make || 'Unknown';
+      if (!byMake.has(name)) byMake.set(name, { name, neu: 0, used: 0, total: 0 });
+      const bucket = byMake.get(name);
+      const views = Number(r.vdp1) || 0;
+      const cond = String(r.condition || '').toLowerCase();
+      if (cond.startsWith('new')) bucket.neu += views;
+      else bucket.used += views;
+      bucket.total += views;
+    }
+
+    const totals = [...byMake.values()]
+      .filter((r) => r.total > 0)
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 12);
+
     return {
-      labels: makeNames,
+      labels: totals.map((r) => r.name),
       datasets: [
-        { label: 'New', data: newByMake, backgroundColor: '#16a34a', borderRadius: 4 },
-        { label: 'Used', data: usedByMake, backgroundColor: '#3730a3', borderRadius: 4 },
+        {
+          label: 'New',
+          data: totals.map((r) => r.neu),
+          backgroundColor: '#16a34a',
+          borderRadius: 4,
+        },
+        {
+          label: 'Used',
+          data: totals.map((r) => r.used),
+          backgroundColor: '#3730a3',
+          borderRadius: 4,
+        },
       ],
     };
-  }, [sorted, makeNames]);
+  }, [sorted]);
 
   const makeOptionsChart = useMemo(
     () => ({
@@ -163,6 +238,12 @@ export default function InventoryView() {
         legend: {
           position: 'bottom',
           labels: { boxWidth: 12, boxHeight: 12, padding: 12, font: { size: 11 } },
+        },
+        tooltip: {
+          callbacks: {
+            label: (ctx) =>
+              ` ${ctx.dataset.label}: ${fmt(ctx.parsed.y)} VDP views`,
+          },
         },
       },
       scales: {
@@ -300,40 +381,42 @@ export default function InventoryView() {
     <div className={`vdp-view${isBusy ? ' vdp-view--card-loading' : ''}`}>
       <VdpLoadingCard active={isBusy} percent={loadPercent} />
       <Toolbar>
+        <ToolbarGroup label="Channel">
+          <VdpMultiFilter
+            allLabel="All Channels"
+            noun="channels"
+            options={channelOptions}
+            selected={channels}
+            onChange={setChannels}
+          />
+        </ToolbarGroup>
         <ToolbarGroup label="Make">
-          <select
-            className="vdp-select"
-            value={make}
-            onChange={(e) => {
-              setMake(e.target.value);
-            }}
-          >
-            <option value="all">All Makes</option>
-            {makeOptions.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
+          <VdpMultiFilter
+            allLabel="All Makes"
+            noun="makes"
+            options={makeOptions}
+            selected={makes}
+            onChange={setMakes}
+          />
         </ToolbarGroup>
         <ToolbarGroup label="Condition">
-          <Seg value={cond} options={COND_OPTS} onChange={setCond} />
+          <VdpMultiFilter
+            allLabel="All"
+            noun="conditions"
+            options={COND_OPTS}
+            selected={conds}
+            onChange={setConds}
+            searchable={false}
+          />
         </ToolbarGroup>
         <ToolbarGroup label="Category">
-          <select
-            className="vdp-select"
-            value={cat}
-            onChange={(e) => {
-              setCat(e.target.value);
-            }}
-          >
-            <option value="all">All Categories</option>
-            {catOptions.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
+          <VdpMultiFilter
+            allLabel="All Categories"
+            noun="categories"
+            options={catOptions}
+            selected={cats}
+            onChange={setCats}
+          />
         </ToolbarGroup>
         <ToolbarGroup label="Search">
           <input
@@ -369,11 +452,6 @@ export default function InventoryView() {
           sub={`vs ${fmt(totalVdp0)} (${priLabel})`}
         />
         <Kpi
-          label="Unique VDP Views"
-          value={fmt(totalUniq)}
-          sub={`${Math.floor(safeDiv(totalUniq, totalVdp1) * 100) || 0}% of total views`}
-        />
-        <Kpi
           label="Avg VDP Views / Vehicle"
           value={fmt(safeDiv(totalVdp1, sorted.length))}
           sub={`${fmt(sorted.length)} vehicles in view (incl. 0-view)`}
@@ -393,15 +471,15 @@ export default function InventoryView() {
         <Card
           className="vdp-card--chart"
           title="VDP Views by Make"
-          sub="New vs. Used, current comparison period"
+          sub="New vs Used · top makes by VDP (current period)"
         >
-          {!makeNames.length ? (
+          {!(makeData.labels || []).length ? (
             <div style={{ color: 'var(--vdp-muted)', fontSize: 13, padding: 12 }}>
               No make data for these filters.
             </div>
           ) : (
             <VdpChart
-              key={`inv-make-${curFrom}-${curTo}-${make}-${cond}-${makeNames.join('|')}`}
+              key={`inv-make-${curFrom}-${curTo}-${makes.join(',')}-${conds.join(',')}-${(makeData.labels || []).join('|')}`}
               type="bar"
               data={makeData}
               options={makeOptionsChart}
@@ -421,7 +499,7 @@ export default function InventoryView() {
             </div>
           ) : (
             <VdpChart
-              key={`inv-cat-${curFrom}-${curTo}-${cat}-${(catData.labels || []).join('|')}`}
+              key={`inv-cat-${curFrom}-${curTo}-${cats.join(',')}-${(catData.labels || []).join('|')}`}
               type="bar"
               data={catData}
               options={catOptionsChart}
@@ -441,27 +519,22 @@ export default function InventoryView() {
             </span>
           </>
         }
-        sub="Use header sort buttons. Includes 0-view inventory · get_inventory_performance_advance · smart_final_data"
+        sub="VDP total + views by channel · scroll horizontally for all channels"
       >
         <>
             <div className="vdp-table-scroll vdp-table-scroll--15">
               <table className="vdp-table">
                 <thead>
                   <tr>
-                    {[
-                      ['vin', 'VIN'],
-                      ['make', 'Make'],
-                      ['model', 'Model'],
-                      ['year', 'Year'],
-                      ['condition', 'Cond.'],
-                      ['category', 'Category'],
-                      ['vdp1', 'VDP (Current)'],
-                      ['vdp0', 'VDP (Prior)'],
-                      ['vdpmom', 'MoM %'],
-                      ['uniq1', 'Unique VDP'],
-                    ].map(([k, label]) => {
+                    {tableColumns.map(([k, label]) => {
                       const active = sort.k === k;
-                      const isRight = ['vdp1', 'vdp0', 'vdpmom', 'uniq1'].includes(k);
+                      const isRight =
+                        k === 'age' ||
+                        k === 'vdp1' ||
+                        String(k).startsWith('ch:');
+                      const channelName = String(k).startsWith('ch:')
+                        ? String(k).slice(3)
+                        : null;
                       return (
                         <th
                           key={k}
@@ -469,9 +542,29 @@ export default function InventoryView() {
                             active ? 'sorted' : ''
                           }`}
                           onClick={() => onSort(k)}
+                          title={channelName || label}
                         >
                           <div className="vdp-col-sort">
-                            <span className="vdp-col-sort-label">{label}</span>
+                            <span className="vdp-col-sort-label">
+                              {channelName ? (
+                                <>
+                                  <span
+                                    className="vdp-legend-swatch"
+                                    style={{
+                                      background: colorForChannel(
+                                        channelName,
+                                        visibleChannelColumns.indexOf(channelName)
+                                      ),
+                                      marginRight: 6,
+                                      verticalAlign: 'middle',
+                                    }}
+                                  />
+                                  {label}
+                                </>
+                              ) : (
+                                label
+                              )}
+                            </span>
                             <span className="vdp-col-sort-arrows" aria-hidden="true">
                               <button
                                 type="button"
@@ -506,7 +599,7 @@ export default function InventoryView() {
                   {sorted.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={10}
+                        colSpan={Math.max(8, tableColumns.length)}
                         style={{
                           textAlign: 'center',
                           color: 'var(--vdp-muted)',
@@ -528,13 +621,17 @@ export default function InventoryView() {
                             {r.condition}
                           </span>
                         </td>
+                        <td className="right mono">{fmtAge(r.age)}</td>
                         <td>{r.category}</td>
                         <td className="right mono">{fmt(r.vdp1)}</td>
-                        <td className="right mono">{fmt(r.vdp0)}</td>
-                        <td className={`right vdp-delta ${momClass(r.vdpmom / 100)}`}>
-                          {r.vdp0 < 1 ? (r.vdp1 > 0 ? 'New' : '—') : pct(r.vdpmom)}
-                        </td>
-                        <td className="right mono">{fmt(r.uniq1)}</td>
+                        {visibleChannelColumns.map((ch) => {
+                          const n = Number(r.channelViews?.[ch]) || 0;
+                          return (
+                            <td key={`${r._key}:${ch}`} className="right mono">
+                              {n > 0 ? fmt(n) : '—'}
+                            </td>
+                          );
+                        })}
                       </tr>
                     ))
                   )}

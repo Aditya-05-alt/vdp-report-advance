@@ -17,6 +17,7 @@ const KNOWN_CHANNEL_COLORS = {
   Audio: '#c084fc',
   'Cross-network': '#64748b',
   Unassigned: '#9ca3af',
+  'Ai Assistant': '#f2be22',
   '(not set)': '#6b7280',
 };
 

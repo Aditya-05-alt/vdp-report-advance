@@ -305,6 +305,9 @@
   border: 1px solid var(--vdp-border);
   border-radius: 12px;
   padding: 12px 14px;
+  overflow: visible;
+  position: relative;
+  z-index: 5;
 }
 .vdp-toolbar-spacer {
   flex: 1 1 auto;
@@ -315,6 +318,8 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  position: relative;
+  overflow: visible;
 }
 .vdp-grp label {
   font-size: 11.5px;
@@ -995,9 +1000,17 @@
 .vdp-toolbar .vdp-dealer-multi {
   gap: 0;
 }
-.vdp-toolbar .vdp-dealer-multi-pop {
+/* Right-align only wide dealer pickers; compact inventory filters open to the right */
+.vdp-toolbar .vdp-dealer-multi:not(.vdp-dealer-multi--compact) .vdp-dealer-multi-pop {
   left: auto;
   right: 0;
+}
+.vdp-toolbar .vdp-dealer-multi--compact .vdp-dealer-multi-pop {
+  left: 0;
+  right: auto;
+  min-width: 240px;
+  width: min(280px, 92vw);
+  z-index: 60;
 }
 .vdp-dealer-multi-lbl {
   font-size: 11.5px;
@@ -1024,9 +1037,14 @@
   opacity: 0.6;
   cursor: not-allowed;
 }
-.vdp-dealer-multi-trigger.is-open {
+.vdp-dealer-multi-trigger.is-open,
+.vdp-dealer-multi-trigger.is-filtered {
   border-color: #2563eb;
   background: #fff;
+}
+.vdp-dealer-multi--compact .vdp-dealer-multi-trigger {
+  min-width: 148px;
+  max-width: 210px;
 }
 .vdp-dealer-multi-trigger-text {
   flex: 1 1 auto;
@@ -1095,6 +1113,14 @@
   font-size: 13px;
   cursor: pointer;
 }
+.vdp-dealer-multi-item input[type='checkbox'] {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--vdp-accent, #2563eb);
+  cursor: pointer;
+}
 .vdp-dealer-multi-item:hover {
   background: #f1f5f9;
 }
@@ -1102,6 +1128,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 .vdp-dealer-multi-empty {
   padding: 10px 6px;

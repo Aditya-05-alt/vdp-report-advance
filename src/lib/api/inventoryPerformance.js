@@ -17,6 +17,15 @@ function normalizeRow(row) {
   const stock = String(row.inv_stock_number || '').trim();
   // Prefer VIN; if empty, fall back to stock number — never show blank when stock exists
   const displayVin = vin || stock || '—';
+  const channelViews =
+    row.channel_views && typeof row.channel_views === 'object'
+      ? Object.fromEntries(
+          Object.entries(row.channel_views).map(([k, v]) => [
+            k,
+            Number(v) || 0,
+          ])
+        )
+      : {};
   return {
     vin: displayVin,
     stock: stock || null,
@@ -27,8 +36,30 @@ function normalizeRow(row) {
     category: row.inv_category || 'Unknown',
     views: Number(row.views) || 0,
     uniqueViews: Number(row.unique_views) || 0,
+    ageDays:
+      row.age_days == null || Number.isNaN(Number(row.age_days))
+        ? null
+        : Number(row.age_days),
+    channelViews,
     _key: vehicleKey(row),
   };
+}
+
+function csvList(value) {
+  if (Array.isArray(value)) {
+    return value.map((v) => String(v || '').trim()).filter(Boolean);
+  }
+  const s = String(value || '').trim();
+  if (!s || s.toLowerCase() === 'all') return [];
+  return s
+    .split(',')
+    .map((v) => v.trim())
+    .filter((v) => v && v.toLowerCase() !== 'all');
+}
+
+function csvParam(value) {
+  const parts = csvList(value);
+  return parts.length ? parts.join(',') : '';
 }
 
 async function fetchPeriod({
@@ -39,6 +70,7 @@ async function fetchPeriod({
   condition,
   category,
   search,
+  channel,
   onCancelCheck,
 }) {
   const qs = new URLSearchParams({
@@ -46,20 +78,29 @@ async function fetchPeriod({
     from: String(from).slice(0, 10),
     to: String(to).slice(0, 10),
   });
-  if (make && make !== 'all') qs.set('make', make);
-  if (condition && condition !== 'all') qs.set('condition', condition);
-  if (category && category !== 'all') qs.set('category', category);
+  const makeCsv = csvParam(make);
+  const condCsv = csvParam(condition);
+  const catCsv = csvParam(category);
+  const channelCsv = csvParam(channel);
+  if (makeCsv) qs.set('make', makeCsv);
+  if (condCsv) qs.set('condition', condCsv);
+  if (catCsv) qs.set('category', catCsv);
   if (search) qs.set('search', search);
+  if (channelCsv) qs.set('channel', channelCsv);
 
   const res = await fetch(`/api/dashboard/inventory-performance?${qs}`, {
     credentials: 'same-origin',
   });
   const json = await res.json().catch(() => ({}));
-  if (onCancelCheck?.()) return [];
+  if (onCancelCheck?.()) return { rows: [], channels: [] };
   if (!res.ok) {
     throw new Error(json.error || `Inventory performance failed (${res.status})`);
   }
-  return (json.rows || []).map(normalizeRow);
+  return {
+    rows: (json.rows || []).map(normalizeRow),
+    channels: Array.isArray(json.channels) ? json.channels : [],
+    channelColumns: Array.isArray(json.channelColumns) ? json.channelColumns : [],
+  };
 }
 
 /**
@@ -72,21 +113,26 @@ export async function fetchInventoryPerformance({
   to,
   priorFrom,
   priorTo,
-  make = 'all',
-  condition = 'all',
-  category = 'all',
+  make = [],
+  condition = [],
+  category = [],
   search = '',
+  channel = [],
   onCancelCheck,
 }) {
-  if (!clientId || !from || !to) return { rows: [], makes: [], categories: [] };
-  if (typeof window === 'undefined') {
-    return { rows: [], makes: [], categories: [] };
+  if (!clientId || !from || !to) {
+    return { rows: [], makes: [], categories: [], channels: [], channelColumns: [] };
   }
-  if (onCancelCheck?.()) return { rows: [], makes: [], categories: [] };
+  if (typeof window === 'undefined') {
+    return { rows: [], makes: [], categories: [], channels: [], channelColumns: [] };
+  }
+  if (onCancelCheck?.()) {
+    return { rows: [], makes: [], categories: [], channels: [], channelColumns: [] };
+  }
 
-  const filterOpts = { make, condition, category, search };
+  const filterOpts = { make, condition, category, search, channel };
 
-  const [current, prior, unfiltered] = await Promise.all([
+  const [currentRes, priorRes, unfilteredRes] = await Promise.all([
     fetchPeriod({
       clientId,
       from,
@@ -102,23 +148,45 @@ export async function fetchInventoryPerformance({
           ...filterOpts,
           onCancelCheck,
         })
-      : Promise.resolve([]),
+      : Promise.resolve({ rows: [], channels: [] }),
     // Unfiltered current period → populate Make / Category dropdowns
-    make !== 'all' || category !== 'all' || condition !== 'all' || search
+    csvList(make).length ||
+    csvList(category).length ||
+    csvList(condition).length ||
+    search ||
+    csvList(channel).length
       ? fetchPeriod({
           clientId,
           from,
           to,
-          make: 'all',
-          condition: 'all',
-          category: 'all',
+          make: [],
+          condition: [],
+          category: [],
           search: '',
+          channel: [],
           onCancelCheck,
         })
       : null,
   ]);
 
-  if (onCancelCheck?.()) return { rows: [], makes: [], categories: [] };
+  if (onCancelCheck?.()) {
+    return { rows: [], makes: [], categories: [], channels: [], channelColumns: [] };
+  }
+
+  const current = currentRes?.rows || [];
+  const prior = priorRes?.rows || [];
+  const unfiltered = unfilteredRes?.rows || null;
+  const channels = [
+    ...new Set([
+      ...(currentRes?.channels || []),
+      ...(unfilteredRes?.channels || []),
+    ]),
+  ].sort((a, b) => a.localeCompare(b));
+  // Prefer current-period channel column order (by traffic); fall back to unfiltered.
+  const channelColumns =
+    (currentRes?.channelColumns || []).length > 0
+      ? currentRes.channelColumns
+      : unfilteredRes?.channelColumns || [];
 
   const priorMap = new Map();
   for (const row of prior || []) {
@@ -135,12 +203,14 @@ export async function fetchInventoryPerformance({
       make: row.make,
       model: row.model,
       year: row.year,
+      age: row.ageDays == null ? null : row.ageDays,
       condition: row.condition,
       category: row.category,
       vdp1,
       vdp0,
       vdpmom: vdp0 > 0 ? ((vdp1 - vdp0) / vdp0) * 100 : vdp1 > 0 ? 100 : 0,
       uniq1: row.uniqueViews,
+      channelViews: row.channelViews || {},
       _key: row._key,
     };
   });
@@ -153,5 +223,5 @@ export async function fetchInventoryPerformance({
     ...new Set(optionSource.map((r) => r.category).filter(Boolean)),
   ].sort((a, b) => a.localeCompare(b));
 
-  return { rows, makes, categories };
+  return { rows, makes, categories, channels, channelColumns };
 }

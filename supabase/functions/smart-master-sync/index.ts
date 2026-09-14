@@ -24,8 +24,14 @@ serve(async (req) => {
   const onlyClientId: string | null = body?.client_id
     ? String(body.client_id)
     : null;
+  // Default lookback: last 5 days (incl. today). Avoids full-history rebuilds
+  // that time out and leave recent dates missing from smart_final_data.
   const daysBack: number | null =
-    body?.days_back != null ? Number(body.days_back) : null;
+    body?.days_back != null
+      ? Number(body.days_back)
+      : body?.p_days_back != null
+        ? Number(body.p_days_back)
+        : 5;
 
   const scope = onlyClientId ? `dealer ${onlyClientId}` : "ALL DEALERS";
   console.log(

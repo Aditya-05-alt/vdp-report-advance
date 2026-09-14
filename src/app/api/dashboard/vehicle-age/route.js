@@ -127,7 +127,7 @@ async function fetchHootRows(supabase, dealerName, q) {
   let query = supabase
     .from(HOOT_TABLE)
     .select(VIN_SELECT)
-    .eq('customer_name', dealerName)
+    .ilike('customer_name', dealerName)
     .not('vin', 'is', null)
     .neq('vin', '')
     .limit(5000);
@@ -153,7 +153,7 @@ async function fetchScrapRows(supabase, dealerName, clientId, q) {
   if (clientId) {
     query = query.eq('customer_id', clientId);
   } else if (dealerName) {
-    query = query.eq('customer_name', dealerName);
+    query = query.ilike('customer_name', dealerName);
   } else {
     return [];
   }
@@ -164,18 +164,84 @@ async function fetchScrapRows(supabase, dealerName, clientId, q) {
   return data || [];
 }
 
+/** UTC today YYYY-MM-DD. */
+function todayYmd() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/** VINs currently on lot (live feed) for this GA4 client. */
+async function fetchLiveVinSet(supabase, clientId) {
+  const set = new Set();
+  const cid = trimStr(clientId);
+  if (!cid) return set;
+  const { data, error } = await supabase
+    .from('smart_hoot_inventory_live')
+    .select('vin')
+    .eq('ga4_customer_id', cid)
+    .not('vin', 'is', null)
+    .neq('vin', '')
+    .limit(8000);
+  if (error) {
+    console.warn('[vehicle-age] live vins:', error.message);
+    return set;
+  }
+  for (const row of data || []) {
+    const vin = trimStr(row.vin);
+    if (vin) set.add(vin);
+  }
+  return set;
+}
+
+/**
+ * Still-on-lot: extend last_seen → today so age / calendar are not stuck
+ * on a stale history sync day.
+ */
+function applyLiveLastSeen(vehicles, liveVins) {
+  const asOf = todayYmd();
+  if (!asOf) return vehicles;
+  let maxLast = null;
+  for (const v of vehicles) {
+    const last = ymd(v.last_seen);
+    if (last && (!maxLast || last > maxLast)) maxLast = last;
+  }
+  return vehicles.map((v) => {
+    const first = ymd(v.first_seen);
+    let last = ymd(v.last_seen);
+    const stillPresent =
+      liveVins.has(trimStr(v.vin)) ||
+      (liveVins.size === 0 && maxLast && last === maxLast);
+    if (stillPresent && (!last || asOf > last)) last = asOf;
+    const age_days =
+      first && last
+        ? Math.max(
+            0,
+            Math.round(
+              (Date.parse(`${last}T00:00:00Z`) -
+                Date.parse(`${first}T00:00:00Z`)) /
+                86400000
+            ) + 1
+          )
+        : 0;
+    return { ...v, last_seen: last, age_days };
+  });
+}
+
 /** List VINs for a dealer from hoot (by name) + scrap (by client id). */
 async function listVins(supabase, dealerName, clientId, q) {
-  const [hootRows, scrapRows] = await Promise.all([
+  const [hootRows, scrapRows, liveVins] = await Promise.all([
     fetchHootRows(supabase, dealerName, q),
     fetchScrapRows(supabase, dealerName, clientId, q),
+    fetchLiveVinSet(supabase, clientId),
   ]);
 
   const byVin = new Map();
   for (const row of hootRows) mergeVinRow(byVin, row, 'hoot');
   for (const row of scrapRows) mergeVinRow(byVin, row, 'scrap');
 
-  return [...byVin.values()].sort((a, b) => a.vin.localeCompare(b.vin));
+  return applyLiveLastSeen(
+    [...byVin.values()].sort((a, b) => a.vin.localeCompare(b.vin)),
+    liveVins
+  );
 }
 
 async function fetchHootVinRows(supabase, dealerName, vin) {
@@ -185,7 +251,7 @@ async function fetchHootVinRows(supabase, dealerName, vin) {
     .select(
       'vin, make, model, year, condition, stock_number, location, first_seen, last_seen, url'
     )
-    .eq('customer_name', dealerName)
+    .ilike('customer_name', dealerName)
     .eq('vin', vin)
     .limit(200);
   if (error) throw new Error(`${HOOT_TABLE}: ${error.message}`);
@@ -204,7 +270,7 @@ async function fetchScrapVinRows(supabase, dealerName, clientId, vin) {
   if (clientId) {
     query = query.eq('customer_id', clientId);
   } else if (dealerName) {
-    query = query.eq('customer_name', dealerName);
+    query = query.ilike('customer_name', dealerName);
   } else {
     return [];
   }
@@ -268,6 +334,16 @@ async function calendarForVin(
     }
     if (!vehicle.location && row.location) vehicle.location = trimStr(row.location);
     if (!vehicle.url && row.url) vehicle.url = trimStr(row.url);
+  }
+
+  // Extend last_seen to today when this VIN is still on the live lot feed.
+  if (clientId && firstSeen) {
+    const liveVins = await fetchLiveVinSet(supabase, clientId);
+    const asOf = todayYmd();
+    const stillPresent = liveVins.has(vin);
+    if (stillPresent && asOf && (!lastSeen || asOf > lastSeen)) {
+      lastSeen = asOf;
+    }
   }
 
   vehicle.first_seen = firstSeen;

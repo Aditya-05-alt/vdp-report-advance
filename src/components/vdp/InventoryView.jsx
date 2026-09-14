@@ -175,8 +175,8 @@ export default function InventoryView() {
       ['model', 'Model'],
       ['year', 'Year'],
       ['condition', 'Cond.'],
-      ['age', 'Age'],
       ['category', 'Category'],
+      ['age', 'Age'],
       ['vdp1', 'VDP (Current)'],
     ],
     []
@@ -621,8 +621,8 @@ export default function InventoryView() {
                             {r.condition}
                           </span>
                         </td>
-                        <td className="right mono">{fmtAge(r.age)}</td>
                         <td>{r.category}</td>
+                        <td className="right mono">{fmtAge(r.age)}</td>
                         <td className="right mono">{fmt(r.vdp1)}</td>
                         {visibleChannelColumns.map((ch) => {
                           const n = Number(r.channelViews?.[ch]) || 0;

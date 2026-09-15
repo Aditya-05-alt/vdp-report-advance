@@ -85,12 +85,9 @@ AS $$
     FROM public.smart_final_data f
     CROSS JOIN channel_keys ck
     WHERE cardinality(ck.keys) = 0
-      AND f.client_id::text = trim(p_client_id)
+      AND f.client_id = trim(p_client_id)
       AND f.report_date BETWEEN p_from AND p_to
-      AND (
-        f.ga4_page_type ILIKE 'VDP%'
-        OR f.vdp_conditions IS TRUE
-      )
+      AND f.vdp_conditions IS TRUE
 
     UNION ALL
 
@@ -124,17 +121,14 @@ AS $$
       COALESCE(g.total_users, 0)::bigint AS unique_views
     FROM public.smart_ga4_page_data g
     INNER JOIN public.smart_final_data f
-      ON f.client_id::text = g.client_id::text
+      ON f.client_id = g.client_id
      AND f.report_date = g.report_date
      AND f.page_path = g.page_path
     CROSS JOIN channel_keys ck
     WHERE cardinality(ck.keys) > 0
-      AND g.client_id::text = trim(p_client_id)
+      AND g.client_id = trim(p_client_id)
       AND g.report_date BETWEEN p_from AND p_to
-      AND (
-        g.vdp_conditions IS TRUE
-        OR g.ga4_page_type ILIKE 'VDP%'
-      )
+      AND g.vdp_conditions IS TRUE
       AND lower(regexp_replace(trim(COALESCE(g.channel, '')), '[_]+', ' ', 'g')) = ANY (ck.keys)
   ),
   view_agg AS (
@@ -183,7 +177,7 @@ AS $$
       COALESCE(NULLIF(TRIM(i.condition), ''), 'Unknown') AS inv_condition,
       COALESCE(NULLIF(TRIM(i.type_), ''), 'Unknown') AS inv_category
     FROM public.smart_hoot_inventory_live i
-    WHERE i.ga4_customer_id::text = trim(p_client_id)
+    WHERE i.ga4_customer_id = trim(p_client_id)
       AND COALESCE(
         NULLIF(TRIM(i.vin), ''),
         NULLIF(TRIM(i.stock_number), '')
@@ -213,11 +207,18 @@ AS $$
       COALESCE(NULLIF(TRIM(i.condition), ''), 'Unknown') AS inv_condition,
       COALESCE(NULLIF(TRIM(i.type_), ''), 'Unknown') AS inv_category
     FROM public.smart_scrap_inventory i
-    WHERE i.customer_id::text = trim(p_client_id)
+    WHERE i.customer_id = trim(p_client_id)
       AND COALESCE(
         NULLIF(TRIM(i.vin), ''),
         NULLIF(TRIM(i.stock_number), '')
       ) IS NOT NULL
+      -- Skip scrap scan entirely when live hoot inventory exists for this dealer.
+      AND NOT EXISTS (
+        SELECT 1
+        FROM public.smart_hoot_inventory_live h
+        WHERE h.ga4_customer_id = trim(p_client_id)
+        LIMIT 1
+      )
     ORDER BY
       UPPER(
         COALESCE(
@@ -231,9 +232,7 @@ AS $$
   inventory AS (
     SELECT * FROM inv_hoot
     UNION ALL
-    SELECT s.*
-    FROM inv_scrap s
-    WHERE NOT EXISTS (SELECT 1 FROM inv_hoot LIMIT 1)
+    SELECT * FROM inv_scrap
   ),
   combined AS (
     SELECT

@@ -15,7 +15,6 @@ function vehicleKey(row) {
 function normalizeRow(row) {
   const vin = String(row.inv_vin || '').trim();
   const stock = String(row.inv_stock_number || '').trim();
-  // Prefer VIN; if empty, fall back to stock number — never show blank when stock exists
   const displayVin = vin || stock || '—';
   const channelViews =
     row.channel_views && typeof row.channel_views === 'object'
@@ -62,6 +61,12 @@ function csvParam(value) {
   return parts.length ? parts.join(',') : '';
 }
 
+function matchVk(vin, stock) {
+  return String(vin || stock || '')
+    .trim()
+    .toUpperCase();
+}
+
 async function fetchPeriod({
   clientId,
   from,
@@ -72,7 +77,9 @@ async function fetchPeriod({
   search,
   channel,
   lite = false,
+  channelsOnly = false,
   onCancelCheck,
+  signal,
 }) {
   const qs = new URLSearchParams({
     clientId: String(clientId).trim(),
@@ -88,11 +95,12 @@ async function fetchPeriod({
   if (catCsv) qs.set('category', catCsv);
   if (search) qs.set('search', search);
   if (channelCsv) qs.set('channel', channelCsv);
-  // Prior / dropdown fetches only need vehicle views — skip age + channel work.
   if (lite) qs.set('lite', '1');
+  if (channelsOnly) qs.set('channelsOnly', '1');
 
   const res = await fetch(`/api/dashboard/inventory-performance?${qs}`, {
     credentials: 'same-origin',
+    signal,
   });
   const json = await res.json().catch(() => ({}));
   if (onCancelCheck?.()) return { rows: [], channels: [] };
@@ -103,102 +111,17 @@ async function fetchPeriod({
     rows: (json.rows || []).map(normalizeRow),
     channels: Array.isArray(json.channels) ? json.channels : [],
     channelColumns: Array.isArray(json.channelColumns) ? json.channelColumns : [],
+    channelMatrix: Array.isArray(json.channelMatrix) ? json.channelMatrix : [],
   };
 }
 
-/**
- * Inventory performance for current (+ optional prior) period.
- * Uses get_inventory_performance_advance.
- */
-export async function fetchInventoryPerformance({
-  clientId,
-  from,
-  to,
-  priorFrom,
-  priorTo,
-  make = [],
-  condition = [],
-  category = [],
-  search = '',
-  channel = [],
-  onCancelCheck,
-}) {
-  if (!clientId || !from || !to) {
-    return { rows: [], makes: [], categories: [], channels: [], channelColumns: [] };
-  }
-  if (typeof window === 'undefined') {
-    return { rows: [], makes: [], categories: [], channels: [], channelColumns: [] };
-  }
-  if (onCancelCheck?.()) {
-    return { rows: [], makes: [], categories: [], channels: [], channelColumns: [] };
-  }
-
-  const filterOpts = { make, condition, category, search, channel };
-
-  const [currentRes, priorRes, unfilteredRes] = await Promise.all([
-    fetchPeriod({
-      clientId,
-      from,
-      to,
-      ...filterOpts,
-      onCancelCheck,
-    }),
-    priorFrom && priorTo
-      ? fetchPeriod({
-          clientId,
-          from: priorFrom,
-          to: priorTo,
-          ...filterOpts,
-          lite: true,
-          onCancelCheck,
-        })
-      : Promise.resolve({ rows: [], channels: [] }),
-    // Unfiltered current period → populate Make / Category dropdowns
-    csvList(make).length ||
-    csvList(category).length ||
-    csvList(condition).length ||
-    search ||
-    csvList(channel).length
-      ? fetchPeriod({
-          clientId,
-          from,
-          to,
-          make: [],
-          condition: [],
-          category: [],
-          search: '',
-          channel: [],
-          lite: true,
-          onCancelCheck,
-        })
-      : null,
-  ]);
-
-  if (onCancelCheck?.()) {
-    return { rows: [], makes: [], categories: [], channels: [], channelColumns: [] };
-  }
-
-  const current = currentRes?.rows || [];
-  const prior = priorRes?.rows || [];
-  const unfiltered = unfilteredRes?.rows || null;
-  const channels = [
-    ...new Set([
-      ...(currentRes?.channels || []),
-      ...(unfilteredRes?.channels || []),
-    ]),
-  ].sort((a, b) => a.localeCompare(b));
-  // Prefer current-period channel column order (by traffic); fall back to unfiltered.
-  const channelColumns =
-    (currentRes?.channelColumns || []).length > 0
-      ? currentRes.channelColumns
-      : unfilteredRes?.channelColumns || [];
-
+function mapRowsWithPrior(current, prior) {
   const priorMap = new Map();
   for (const row of prior || []) {
     priorMap.set(row._key, row);
   }
 
-  const rows = (current || []).map((row) => {
+  return (current || []).map((row) => {
     const prev = priorMap.get(row._key);
     const vdp0 = prev?.views || 0;
     const vdp1 = row.views;
@@ -219,14 +142,180 @@ export async function fetchInventoryPerformance({
       _key: row._key,
     };
   });
+}
 
-  const optionSource = unfiltered || current || [];
+function optionLists(rows) {
   const makes = [
-    ...new Set(optionSource.map((r) => r.make).filter(Boolean)),
+    ...new Set((rows || []).map((r) => r.make).filter(Boolean)),
   ].sort((a, b) => a.localeCompare(b));
   const categories = [
-    ...new Set(optionSource.map((r) => r.category).filter(Boolean)),
+    ...new Set((rows || []).map((r) => r.category).filter(Boolean)),
   ].sort((a, b) => a.localeCompare(b));
+  return { makes, categories };
+}
 
-  return { rows, makes, categories, channels, channelColumns };
+/**
+ * Inventory performance — paint current period ASAP (~3s target for big dealers).
+ * Prior MoM + channel columns fill in the background without blocking first paint.
+ */
+export async function fetchInventoryPerformance({
+  clientId,
+  from,
+  to,
+  priorFrom,
+  priorTo,
+  make = [],
+  condition = [],
+  category = [],
+  search = '',
+  channel = [],
+  onCancelCheck,
+  onCoreReady,
+  onUpdate,
+}) {
+  if (!clientId || !from || !to) {
+    return { rows: [], makes: [], categories: [], channels: [], channelColumns: [] };
+  }
+  if (typeof window === 'undefined') {
+    return { rows: [], makes: [], categories: [], channels: [], channelColumns: [] };
+  }
+  if (onCancelCheck?.()) {
+    return { rows: [], makes: [], categories: [], channels: [], channelColumns: [] };
+  }
+
+  const filterOpts = { make, condition, category, search, channel };
+  const needUnfiltered =
+    csvList(make).length ||
+    csvList(category).length ||
+    csvList(condition).length ||
+    search ||
+    csvList(channel).length;
+
+  // 1) Current period only — this is what blocks the spinner.
+  const currentRes = await fetchPeriod({
+    clientId,
+    from,
+    to,
+    ...filterOpts,
+    onCancelCheck,
+  });
+  if (onCancelCheck?.()) {
+    return { rows: [], makes: [], categories: [], channels: [], channelColumns: [] };
+  }
+
+  let rows = mapRowsWithPrior(currentRes.rows || [], []);
+  let { makes, categories } = optionLists(currentRes.rows || []);
+
+  const corePayload = {
+    rows,
+    makes,
+    categories,
+    channels: [],
+    channelColumns: [],
+  };
+  onCoreReady?.(corePayload);
+  onUpdate?.(corePayload);
+
+  // 2) Background: prior MoM + filter option lists + channel columns.
+  const bg = [];
+
+  if (priorFrom && priorTo) {
+    bg.push(
+      fetchPeriod({
+        clientId,
+        from: priorFrom,
+        to: priorTo,
+        ...filterOpts,
+        lite: true,
+        onCancelCheck,
+      }).then((priorRes) => {
+        if (onCancelCheck?.()) return;
+        rows = mapRowsWithPrior(currentRes.rows || [], priorRes.rows || []);
+        onUpdate?.({
+          rows,
+          makes,
+          categories,
+          channels: corePayload.channels,
+          channelColumns: corePayload.channelColumns,
+        });
+      })
+    );
+  }
+
+  if (needUnfiltered) {
+    bg.push(
+      fetchPeriod({
+        clientId,
+        from,
+        to,
+        make: [],
+        condition: [],
+        category: [],
+        search: '',
+        channel: [],
+        lite: true,
+        onCancelCheck,
+      }).then((unfilteredRes) => {
+        if (onCancelCheck?.()) return;
+        const opts = optionLists(unfilteredRes.rows || []);
+        makes = opts.makes;
+        categories = opts.categories;
+        onUpdate?.({
+          rows,
+          makes,
+          categories,
+          channels: corePayload.channels,
+          channelColumns: corePayload.channelColumns,
+        });
+      })
+    );
+  }
+
+  bg.push(
+    fetchPeriod({
+      clientId,
+      from,
+      to,
+      ...filterOpts,
+      channelsOnly: true,
+      onCancelCheck,
+    })
+      .then((chRes) => {
+        if (onCancelCheck?.()) return;
+        const channels = chRes.channels || [];
+        const channelColumns = chRes.channelColumns || [];
+        corePayload.channels = channels;
+        corePayload.channelColumns = channelColumns;
+        const byVk = new Map(
+          (chRes.channelMatrix || []).map((m) => [
+            String(m.vk || ''),
+            m.channel_views || {},
+          ])
+        );
+        if (byVk.size) {
+          rows = rows.map((r) => {
+            const vk = matchVk(r.vin, r.stock);
+            const channelViews = byVk.get(vk) || r.channelViews || {};
+            return { ...r, channelViews };
+          });
+        }
+        onUpdate?.({ rows, makes, categories, channels, channelColumns });
+      })
+      .catch(() => {
+        /* channels optional */
+      })
+  );
+
+  await Promise.allSettled(bg);
+  if (onCancelCheck?.()) {
+    return { rows: [], makes: [], categories: [], channels: [], channelColumns: [] };
+  }
+
+  return {
+    rows,
+    makes,
+    categories,
+    channels: corePayload.channels,
+    channelColumns: corePayload.channelColumns,
+  };
 }

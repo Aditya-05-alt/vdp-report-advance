@@ -101,6 +101,22 @@ export default function InventoryView() {
         channel: channels,
         search,
         onCancelCheck: () => isStale(),
+        onCoreReady: (core) => {
+          if (isStale()) return;
+          // First paint from current period only — target ~3s for big dealers.
+          setRows(core.rows || []);
+          setMakeOptions(core.makes || []);
+          setCatOptions(core.categories || []);
+          setLoading(false);
+        },
+        onUpdate: (next) => {
+          if (isStale()) return;
+          setRows(next.rows || []);
+          setMakeOptions(next.makes || []);
+          setCatOptions(next.categories || []);
+          setChannelOptions(next.channels || []);
+          setChannelColumns(next.channelColumns || []);
+        },
       });
       if (isStale()) return;
       setRows(result.rows || []);

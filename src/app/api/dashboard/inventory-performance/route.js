@@ -175,210 +175,42 @@ function ageLookupKeys(vin, stock) {
 }
 
 /**
- * Merge first/last seen for VIN/stock keys.
- * Accepts hoot/scrap (vin, stock_number, first_seen, last_seen) or final_data
- * (inv_*, report_date). report_date fills gaps when a link exists but
- * inv_first_seen / inv_last_seen were not copied onto the page row.
+ * Age map via single SQL RPC (replaces multi-page PostgREST scans).
+ * Same rules: live extends last_seen → today; updated today → min 2d.
  */
-function mergeAgeRow(byKey, row) {
-  const vin = row.vin ?? row.inv_vin;
-  const stock = row.stock_number ?? row.inv_stock_number;
-  let first = ymd(row.first_seen ?? row.inv_first_seen);
-  let last = ymd(row.last_seen ?? row.inv_last_seen);
-  const report = ymd(row.report_date);
-  if (!first && report) first = report;
-  if (!last && report) last = report;
-  if (!first || !last) return;
-  const keys = ageLookupKeys(vin, stock);
-  if (!keys.length) return;
-  for (const key of keys) {
-    const prev = byKey.get(key) || { first: null, last: null };
-    if (!prev.first || first < prev.first) prev.first = first;
-    if (!prev.last || last > prev.last) prev.last = last;
-    byKey.set(key, prev);
-  }
-}
-
-/** Paginate a PostgREST query (default max_rows is often 1000). */
-async function fetchPaged(buildQuery, { pageSize = 1000, maxRows = 12000 } = {}) {
-  const rows = [];
-  // First page
-  {
-    const { data, error } = await buildQuery().range(0, pageSize - 1);
-    if (error) return { data: rows, error };
-    const batch = data || [];
-    rows.push(...batch);
-    if (batch.length < pageSize) return { data: rows, error: null };
-  }
-
-  // Remaining pages in parallel waves (much faster for big dealers).
-  let from = pageSize;
-  while (from < maxRows) {
-    const starts = [];
-    for (let i = 0; i < 4 && from + i * pageSize < maxRows; i++) {
-      starts.push(from + i * pageSize);
-    }
-    const parts = await Promise.all(
-      starts.map((start) =>
-        buildQuery().range(start, Math.min(start + pageSize - 1, maxRows - 1))
-      )
-    );
-    let short = false;
-    for (const { data, error } of parts) {
-      if (error) return { data: rows, error };
-      const batch = data || [];
-      rows.push(...batch);
-      if (batch.length < pageSize) short = true;
-    }
-    if (short) break;
-    from += starts.length * pageSize;
-  }
-  return { data: rows, error: null };
-}
-
-/** Live on-lot keys + which ones were synced/updated today. */
-async function fetchLiveAgeKeys(supabase, clientId) {
-  const liveKeys = new Set();
+async function fetchAgeDaysMap(supabase, clientId, from, to) {
+  const ageByKey = new Map();
   const updatedTodayKeys = new Set();
   const cid = trimStr(clientId);
-  if (!cid) return { liveKeys, updatedTodayKeys };
+  if (!cid) return ageByKey;
 
-  const asOf = todayYmd();
-  const { data, error } = await fetchPaged(() =>
-    supabase
-      .from('smart_hoot_inventory_live')
-      .select('vin, stock_number, synced_at')
-      .eq('ga4_customer_id', cid)
-  );
+  const { data, error } = await supabase.rpc('get_inventory_age_map_advance', {
+    p_client_id: cid,
+    p_from: from,
+    p_to: to,
+  });
 
   if (error) {
     console.warn(
-      '[inventory-performance-advance] live age keys:',
+      '[inventory-performance-advance] age map rpc:',
       error.message
     );
-    return { liveKeys, updatedTodayKeys };
+    ageByKey._updatedTodayKeys = updatedTodayKeys;
+    return ageByKey;
   }
 
   for (const row of data || []) {
-    const keys = ageLookupKeys(row.vin, row.stock_number);
-    const syncedDay = ymd(row.synced_at);
-    for (const key of keys) {
-      liveKeys.add(key);
-      if (!syncedDay || syncedDay === asOf) updatedTodayKeys.add(key);
-    }
-  }
-  return { liveKeys, updatedTodayKeys };
-}
-
-/**
- * Age map — dealer-scoped queries (not per-VIN chunks).
- * 1) smart_final_data dates in the selected range (link source)
- * 2) hoot + scrap inventory history for the dealer
- * 3) live on-lot extends last_seen → today; updated today → min 2d
- */
-async function fetchAgeDaysMap(supabase, clientId, from, to) {
-  const byKey = new Map();
-  const cid = trimStr(clientId);
-  if (!cid) return byKey;
-
-  const { data: cfg } = await supabase
-    .from('smart_hoot_config')
-    .select('customer_name')
-    .eq('ga4_customer_id', cid)
-    .limit(1)
-    .maybeSingle();
-  const dealerName = trimStr(cfg?.customer_name);
-
-  const [finalRes, scrapRes, liveInfo, hootRes] = await Promise.all([
-    fetchPaged(
-      () =>
-        supabase
-          .from('smart_final_data')
-          .select(
-            'inv_vin, inv_stock_number, inv_first_seen, inv_last_seen, report_date'
-          )
-          .eq('client_id', cid)
-          .gte('report_date', from)
-          .lte('report_date', to),
-      { maxRows: 20000 }
-    ),
-    fetchPaged(
-      () =>
-        supabase
-          .from('smart_scrap_inventory')
-          .select('vin, stock_number, first_seen, last_seen')
-          .eq('customer_id', cid),
-      { maxRows: 12000 }
-    ),
-    fetchLiveAgeKeys(supabase, cid),
-    dealerName
-      ? fetchPaged(
-          () =>
-            supabase
-              .from('smart_hoot_inventory')
-              .select('vin, stock_number, first_seen, last_seen')
-              .ilike('customer_name', dealerName),
-          { maxRows: 12000 }
-        )
-      : Promise.resolve({ data: [], error: null }),
-  ]);
-
-  if (finalRes.error) {
-    console.warn(
-      '[inventory-performance-advance] final age:',
-      finalRes.error.message
-    );
-  }
-  if (scrapRes.error) {
-    console.warn(
-      '[inventory-performance-advance] scrap age:',
-      scrapRes.error.message
-    );
-  }
-  if (hootRes.error) {
-    console.warn(
-      '[inventory-performance-advance] hoot age:',
-      hootRes.error.message
-    );
-  }
-
-  const { liveKeys, updatedTodayKeys } = liveInfo;
-
-  for (const row of finalRes.data || []) mergeAgeRow(byKey, row);
-  for (const row of hootRes.data || []) mergeAgeRow(byKey, row);
-  for (const row of scrapRes.data || []) mergeAgeRow(byKey, row);
-
-  const asOf = todayYmd();
-  for (const [key, span] of byKey) {
-    if (span.last === asOf) updatedTodayKeys.add(key);
-  }
-
-  let dealerMaxLast = null;
-  for (const span of byKey.values()) {
-    if (span.last && (!dealerMaxLast || span.last > dealerMaxLast)) {
-      dealerMaxLast = span.last;
-    }
-  }
-
-  const ageByKey = new Map();
-  for (const [key, span] of byKey) {
-    let last = span.last;
-    const stillPresent =
-      liveKeys.has(key) ||
-      (liveKeys.size === 0 && dealerMaxLast && span.last === dealerMaxLast);
-    if (stillPresent && asOf && (!last || asOf > last)) {
-      last = asOf;
-      updatedTodayKeys.add(key);
-    }
-    let days = ageDaysFromSeen(span.first, last);
+    const keys = ageLookupKeys(row.inv_vin, row.inv_stock_number);
+    if (!keys.length) continue;
+    let days = ageDaysFromSeen(row.first_seen, row.last_seen);
+    const updatedToday = Boolean(row.updated_today) || Boolean(row.is_live);
+    if (days == null && row.is_live) days = updatedToday ? 2 : 1;
     if (days == null) continue;
-    if (updatedTodayKeys.has(key) && days <= 1) days = 2;
-    ageByKey.set(key, days);
-  }
-
-  for (const key of liveKeys) {
-    if (!ageByKey.has(key)) {
-      ageByKey.set(key, updatedTodayKeys.has(key) ? 2 : 1);
+    if (updatedToday && days <= 1) days = 2;
+    for (const key of keys) {
+      if (updatedToday) updatedTodayKeys.add(key);
+      const prev = ageByKey.get(key);
+      if (prev == null || days > prev) ageByKey.set(key, days);
     }
   }
 
@@ -454,6 +286,14 @@ export async function GET(request) {
   const lite =
     searchParams.get('lite') === '1' ||
     searchParams.get('lite') === 'true';
+  // channels=1 loads the heavy channel matrix (background fill for big dealers).
+  const wantChannels =
+    searchParams.get('channels') === '1' ||
+    searchParams.get('channels') === 'true';
+  // channelsOnly = only matrix (merge into already-loaded core rows).
+  const channelsOnly =
+    searchParams.get('channelsOnly') === '1' ||
+    searchParams.get('channelsOnly') === 'true';
 
   if (!clientId || !from || !to) {
     return NextResponse.json(
@@ -474,6 +314,41 @@ export async function GET(request) {
   const supabase = createClient(url, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
+
+  if (channelsOnly) {
+    const { data, error } = await supabase.rpc(
+      'get_inventory_channel_matrix_advance',
+      {
+        p_client_id: clientId,
+        p_from: from,
+        p_to: to,
+        p_make: make,
+        p_condition: condition,
+        p_category: category,
+        p_search: search || null,
+      }
+    );
+    if (error) {
+      console.warn(
+        '[inventory-performance-advance] channel matrix:',
+        error.message
+      );
+      return NextResponse.json({
+        rows: [],
+        channels: [],
+        channelColumns: [],
+        channelMatrix: [],
+      });
+    }
+    const { byKey, columns: channelColumns } = pivotChannelMatrix(data || []);
+    const channels = channelColumns.slice().sort((a, b) => a.localeCompare(b));
+    // Compact payload: vin/stock → channel views
+    const channelMatrix = [...byKey.entries()].map(([vk, channel_views]) => ({
+      vk,
+      channel_views,
+    }));
+    return NextResponse.json({ channels, channelColumns, channelMatrix });
+  }
 
   const rpcPromise = supabase.rpc('get_inventory_performance_advance', {
     p_client_id: clientId,
@@ -520,26 +395,34 @@ export async function GET(request) {
     return NextResponse.json({ rows, channels: [], channelColumns: [] });
   }
 
-  const [rpcRes, channelMatrixRes, ageByKey] = await Promise.all([
+  // Core path (fast): inventory rows + age. Channel matrix is optional —
+  // big dealers load it in a follow-up request so the page can paint ASAP.
+  const tasks = [
     rpcPromise,
-    supabase.rpc('get_inventory_channel_matrix_advance', {
-      p_client_id: clientId,
-      p_from: from,
-      p_to: to,
-      p_make: make,
-      p_condition: condition,
-      p_category: category,
-      p_search: search || null,
-    }),
     fetchAgeDaysMap(supabase, clientId, from, to),
-  ]);
+  ];
+  if (wantChannels) {
+    tasks.push(
+      supabase.rpc('get_inventory_channel_matrix_advance', {
+        p_client_id: clientId,
+        p_from: from,
+        p_to: to,
+        p_make: make,
+        p_condition: condition,
+        p_category: category,
+        p_search: search || null,
+      })
+    );
+  }
+
+  const [rpcRes, ageByKey, channelMatrixRes] = await Promise.all(tasks);
 
   if (rpcRes.error) {
     console.error('[inventory-performance-advance]', rpcRes.error.message);
     return NextResponse.json({ error: rpcRes.error.message }, { status: 500 });
   }
 
-  if (channelMatrixRes.error) {
+  if (channelMatrixRes?.error) {
     console.warn(
       '[inventory-performance-advance] channel matrix:',
       channelMatrixRes.error.message
@@ -548,7 +431,7 @@ export async function GET(request) {
 
   let rows = rpcRes.data ?? [];
   const { byKey: channelByKey, columns: channelColumns } = pivotChannelMatrix(
-    channelMatrixRes.data || []
+    channelMatrixRes?.data || []
   );
 
   if (needsVinEnrichment(rows)) {
@@ -569,10 +452,11 @@ export async function GET(request) {
     });
   }
 
-  rows = attachChannelViews(rows, channelByKey);
+  if (wantChannels) {
+    rows = attachChannelViews(rows, channelByKey);
+  }
   rows = attachAgeDays(rows, ageByKey).map(normalizeOutputRow);
 
-  // Channel filter options = columns with traffic (no extra GA4 scan).
   const channels = channelColumns.slice().sort((a, b) => a.localeCompare(b));
 
   return NextResponse.json({ rows, channels, channelColumns });

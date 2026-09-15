@@ -87,7 +87,7 @@ AS $$
     WHERE cardinality(ck.keys) = 0
       AND f.client_id = trim(p_client_id)
       AND f.report_date BETWEEN p_from AND p_to
-      AND f.vdp_conditions IS TRUE
+      -- Match Overview VDP KPI (get_vdp_views_total): do not filter vdp_conditions.
 
     UNION ALL
 

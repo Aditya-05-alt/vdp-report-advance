@@ -9,7 +9,6 @@ import { isAllDealerClient } from '@/lib/dashboard/allDealers';
 import VdpChart from './VdpChart';
 import { VdpLoadingCard } from './VdpLoadingBanner';
 import { useVdpDateRange } from './VdpDateRangeContext';
-import { useSoftLoadPercent } from './useSoftLoadPercent';
 import { Card, Kpi, Toolbar, ToolbarGroup, VdpMultiFilter } from './VdpUi';
 
 const COND_OPTS = [
@@ -18,6 +17,14 @@ const COND_OPTS = [
 ];
 
 const VISIBLE_ROWS = 15;
+
+const LOAD_STAGE_LABEL = {
+  inventory: 'Loading inventory…',
+  compare: 'Loading compare period…',
+  filters: 'Loading filters…',
+  channels: 'Loading channels…',
+  done: 'Ready',
+};
 
 function conditionClass(condition) {
   const c = String(condition || '').toLowerCase();
@@ -62,6 +69,8 @@ export default function InventoryView() {
   const [channelOptions, setChannelOptions] = useState([]);
   const [channelColumns, setChannelColumns] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [loadPercent, setLoadPercent] = useState(0);
+  const [loadLabel, setLoadLabel] = useState('Loading...');
   const [error, setError] = useState(null);
   const cancelRef = useRef(false);
   const loadGenRef = useRef(0);
@@ -77,6 +86,8 @@ export default function InventoryView() {
       setCatOptions([]);
       setChannelOptions([]);
       setChannelColumns([]);
+      setLoading(false);
+      setLoadPercent(0);
       return;
     }
 
@@ -86,6 +97,10 @@ export default function InventoryView() {
     const isStale = () => cancelRef.current || loadGenRef.current !== loadGen;
 
     setLoading(true);
+    setLoadPercent(2);
+    setLoadLabel('Loading inventory…');
+    setChannelColumns([]);
+    setChannelOptions([]);
     setError(null);
 
     try {
@@ -101,21 +116,32 @@ export default function InventoryView() {
         channel: channels,
         search,
         onCancelCheck: () => isStale(),
+        onProgress: (prog) => {
+          if (isStale()) return;
+          const pct = Number(prog?.percent);
+          if (!Number.isNaN(pct)) setLoadPercent(Math.max(2, Math.min(99, pct)));
+          const stage = prog?.stage;
+          if (stage && LOAD_STAGE_LABEL[stage]) {
+            setLoadLabel(LOAD_STAGE_LABEL[stage]);
+          }
+        },
         onCoreReady: (core) => {
           if (isStale()) return;
-          // First paint from current period only — target ~3s for big dealers.
           setRows(core.rows || []);
           setMakeOptions(core.makes || []);
           setCatOptions(core.categories || []);
-          setLoading(false);
+          setChannelColumns([]);
+          setChannelOptions([]);
         },
         onUpdate: (next) => {
           if (isStale()) return;
           setRows(next.rows || []);
           setMakeOptions(next.makes || []);
           setCatOptions(next.categories || []);
-          setChannelOptions(next.channels || []);
-          setChannelColumns(next.channelColumns || []);
+          if (Array.isArray(next.channelColumns)) {
+            setChannelOptions(next.channels || []);
+            setChannelColumns(next.channelColumns);
+          }
         },
       });
       if (isStale()) return;
@@ -124,13 +150,18 @@ export default function InventoryView() {
       setCatOptions(result.categories || []);
       setChannelOptions(result.channels || []);
       setChannelColumns(result.channelColumns || []);
+      setLoadPercent(100);
+      setLoadLabel('Ready');
     } catch (err) {
       if (!isStale()) {
         setError(err?.message || 'Failed to load inventory performance.');
         setRows([]);
       }
     } finally {
-      if (!isStale()) setLoading(false);
+      if (!isStale()) {
+        setLoading(false);
+        setLoadPercent(0);
+      }
     }
   }, [canLoad, ga4Id, curFrom, curTo, priFrom, priTo, makes, conds, cats, channels, search]);
 
@@ -378,7 +409,7 @@ export default function InventoryView() {
   };
 
   const isBusy = dealersLoading || loading;
-  const loadPercent = useSoftLoadPercent(isBusy);
+  const overlayPercent = dealersLoading ? null : loadPercent;
 
   if (!dealersLoading && (!client || isAllDealer || !ga4Id)) {
     return (
@@ -395,7 +426,12 @@ export default function InventoryView() {
 
   return (
     <div className={`vdp-view${isBusy ? ' vdp-view--card-loading' : ''}`}>
-      <VdpLoadingCard active={isBusy} percent={loadPercent} />
+      <VdpLoadingCard
+        active={isBusy}
+        freeze
+        label={dealersLoading ? 'Loading dealers…' : loadLabel}
+        percent={overlayPercent}
+      />
       <Toolbar>
         <ToolbarGroup label="Channel">
           <VdpMultiFilter
@@ -539,10 +575,21 @@ export default function InventoryView() {
       >
         <>
             <div className="vdp-table-scroll vdp-table-scroll--15">
-              <table className="vdp-table">
+              <table
+                className="vdp-table vdp-inv-detail"
+                style={{
+                  ['--inv-col-vin']: '168px',
+                  ['--inv-col-make']: '110px',
+                  ['--inv-col-model']: '120px',
+                  ['--inv-col-year']: '56px',
+                  ['--inv-col-cond']: '72px',
+                  ['--inv-col-cat']: '120px',
+                  ['--inv-col-age']: '56px',
+                }}
+              >
                 <thead>
                   <tr>
-                    {tableColumns.map(([k, label]) => {
+                    {tableColumns.map(([k, label], colIdx) => {
                       const active = sort.k === k;
                       const isRight =
                         k === 'age' ||
@@ -551,11 +598,16 @@ export default function InventoryView() {
                       const channelName = String(k).startsWith('ch:')
                         ? String(k).slice(3)
                         : null;
+                      const freezeIdx = colIdx <= 6 ? colIdx : -1;
                       return (
                         <th
                           key={k}
                           className={`vdp-th-sortable ${isRight ? 'right' : ''} ${
                             active ? 'sorted' : ''
+                          } ${
+                            freezeIdx >= 0
+                              ? `vdp-inv-sticky vdp-inv-sticky--${freezeIdx}`
+                              : ''
                           }`}
                           onClick={() => onSort(k)}
                           title={channelName || label}
@@ -628,17 +680,21 @@ export default function InventoryView() {
                   ) : (
                     sorted.map((r) => (
                       <tr key={r._key}>
-                        <td className="mono">{r.vin || r.stock || '—'}</td>
-                        <td>{r.make}</td>
-                        <td>{r.model}</td>
-                        <td>{r.year}</td>
-                        <td>
+                        <td className="mono vdp-inv-sticky vdp-inv-sticky--0">
+                          {r.vin || r.stock || '—'}
+                        </td>
+                        <td className="vdp-inv-sticky vdp-inv-sticky--1">{r.make}</td>
+                        <td className="vdp-inv-sticky vdp-inv-sticky--2">{r.model}</td>
+                        <td className="vdp-inv-sticky vdp-inv-sticky--3">{r.year}</td>
+                        <td className="vdp-inv-sticky vdp-inv-sticky--4">
                           <span className={`vdp-tag ${conditionClass(r.condition)}`}>
                             {r.condition}
                           </span>
                         </td>
-                        <td>{r.category}</td>
-                        <td className="right mono">{fmtAge(r.age)}</td>
+                        <td className="vdp-inv-sticky vdp-inv-sticky--5">{r.category}</td>
+                        <td className="right mono vdp-inv-sticky vdp-inv-sticky--6">
+                          {fmtAge(r.age)}
+                        </td>
                         <td className="right mono">{fmt(r.vdp1)}</td>
                         {visibleChannelColumns.map((ch) => {
                           const n = Number(r.channelViews?.[ch]) || 0;

@@ -86,23 +86,26 @@ function vehicleMatchKey(vin, stock) {
 }
 
 /**
- * Pivot RPC rows → { byKey: Map<vk, {channel: views}>, columns: string[] }.
- * Columns = channels with traffic, sorted by total views desc.
+ * Compact map from get_inventory_channel_views_map_advance:
+ * { "VIN": { "Organic Search": 10, ... }, ... }
  */
-function pivotChannelMatrix(matrixRows) {
+function pivotChannelViewsMap(mapObj) {
   const byKey = new Map();
   const totals = new Map();
+  const raw = mapObj && typeof mapObj === 'object' ? mapObj : {};
 
-  for (const row of matrixRows || []) {
-    const vk = vehicleMatchKey(row.inv_vin, row.inv_stock_number);
-    const channel = trimStr(row.channel_bucket);
-    const views = Number(row.views) || 0;
-    if (!vk || !channel || views <= 0) continue;
-
-    if (!byKey.has(vk)) byKey.set(vk, {});
-    const bucket = byKey.get(vk);
-    bucket[channel] = (bucket[channel] || 0) + views;
-    totals.set(channel, (totals.get(channel) || 0) + views);
+  for (const [rawVk, channels] of Object.entries(raw)) {
+    const vk = trimStr(rawVk).toUpperCase();
+    if (!vk || !channels || typeof channels !== 'object') continue;
+    const bucket = {};
+    for (const [channel, viewsRaw] of Object.entries(channels)) {
+      const channelName = trimStr(channel);
+      const views = Number(viewsRaw) || 0;
+      if (!channelName || views <= 0) continue;
+      bucket[channelName] = (bucket[channelName] || 0) + views;
+      totals.set(channelName, (totals.get(channelName) || 0) + views);
+    }
+    if (Object.keys(bucket).length) byKey.set(vk, bucket);
   }
 
   const columns = [...totals.entries()]
@@ -110,6 +113,15 @@ function pivotChannelMatrix(matrixRows) {
     .map(([name]) => name);
 
   return { byKey, columns };
+}
+
+async function fetchChannelViewsMap(supabase, params) {
+  const { data, error } = await supabase.rpc(
+    'get_inventory_channel_views_map_advance',
+    params
+  );
+  if (error) return { byKey: new Map(), columns: [], error };
+  return { ...pivotChannelViewsMap(data || {}), error: null };
 }
 
 function attachChannelViews(rows, channelByKey) {
@@ -316,21 +328,22 @@ export async function GET(request) {
   });
 
   if (channelsOnly) {
-    const { data, error } = await supabase.rpc(
-      'get_inventory_channel_matrix_advance',
-      {
-        p_client_id: clientId,
-        p_from: from,
-        p_to: to,
-        p_make: make,
-        p_condition: condition,
-        p_category: category,
-        p_search: search || null,
-      }
+    const channelParams = {
+      p_client_id: clientId,
+      p_from: from,
+      p_to: to,
+      p_make: make,
+      p_condition: condition,
+      p_category: category,
+      p_search: search || null,
+    };
+    const { byKey, columns: channelColumns, error } = await fetchChannelViewsMap(
+      supabase,
+      channelParams
     );
     if (error) {
       console.warn(
-        '[inventory-performance-advance] channel matrix:',
+        '[inventory-performance-advance] channel views map:',
         error.message
       );
       return NextResponse.json({
@@ -340,7 +353,6 @@ export async function GET(request) {
         channelMatrix: [],
       });
     }
-    const { byKey, columns: channelColumns } = pivotChannelMatrix(data || []);
     const channels = channelColumns.slice().sort((a, b) => a.localeCompare(b));
     // Compact payload: vin/stock → channel views
     const channelMatrix = [...byKey.entries()].map(([vk, channel_views]) => ({
@@ -403,7 +415,7 @@ export async function GET(request) {
   ];
   if (wantChannels) {
     tasks.push(
-      supabase.rpc('get_inventory_channel_matrix_advance', {
+      fetchChannelViewsMap(supabase, {
         p_client_id: clientId,
         p_from: from,
         p_to: to,
@@ -415,24 +427,23 @@ export async function GET(request) {
     );
   }
 
-  const [rpcRes, ageByKey, channelMatrixRes] = await Promise.all(tasks);
+  const [rpcRes, ageByKey, channelMapRes] = await Promise.all(tasks);
 
   if (rpcRes.error) {
     console.error('[inventory-performance-advance]', rpcRes.error.message);
     return NextResponse.json({ error: rpcRes.error.message }, { status: 500 });
   }
 
-  if (channelMatrixRes?.error) {
+  if (channelMapRes?.error) {
     console.warn(
-      '[inventory-performance-advance] channel matrix:',
-      channelMatrixRes.error.message
+      '[inventory-performance-advance] channel views map:',
+      channelMapRes.error.message
     );
   }
 
   let rows = rpcRes.data ?? [];
-  const { byKey: channelByKey, columns: channelColumns } = pivotChannelMatrix(
-    channelMatrixRes?.data || []
-  );
+  const channelByKey = channelMapRes?.byKey || new Map();
+  const channelColumns = channelMapRes?.columns || [];
 
   if (needsVinEnrichment(rows)) {
     const vinByStock = await lookupVinByStock(

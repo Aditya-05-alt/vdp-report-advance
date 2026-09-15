@@ -1313,6 +1313,91 @@
 .vdp-table-scroll--15 {
   max-height: calc(42px + (15 * 37px));
 }
+
+/* Inventory Detail: freeze VIN → Age while VDP + channels scroll */
+.vdp-inv-detail {
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+  width: max-content;
+  min-width: 100%;
+}
+.vdp-inv-detail th.vdp-inv-sticky,
+.vdp-inv-detail td.vdp-inv-sticky {
+  position: sticky;
+  z-index: 2;
+  background: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+.vdp-inv-detail thead th.vdp-inv-sticky {
+  z-index: 5;
+  background: #fff;
+}
+.vdp-inv-detail tbody tr:hover td.vdp-inv-sticky {
+  background: #f8fafc;
+}
+.vdp-inv-detail .vdp-inv-sticky--0 {
+  left: 0;
+  width: var(--inv-col-vin);
+  min-width: var(--inv-col-vin);
+  max-width: var(--inv-col-vin);
+}
+.vdp-inv-detail .vdp-inv-sticky--1 {
+  left: var(--inv-col-vin);
+  width: var(--inv-col-make);
+  min-width: var(--inv-col-make);
+  max-width: var(--inv-col-make);
+}
+.vdp-inv-detail .vdp-inv-sticky--2 {
+  left: calc(var(--inv-col-vin) + var(--inv-col-make));
+  width: var(--inv-col-model);
+  min-width: var(--inv-col-model);
+  max-width: var(--inv-col-model);
+}
+.vdp-inv-detail .vdp-inv-sticky--3 {
+  left: calc(var(--inv-col-vin) + var(--inv-col-make) + var(--inv-col-model));
+  width: var(--inv-col-year);
+  min-width: var(--inv-col-year);
+  max-width: var(--inv-col-year);
+}
+.vdp-inv-detail .vdp-inv-sticky--4 {
+  left: calc(
+    var(--inv-col-vin) + var(--inv-col-make) + var(--inv-col-model) +
+      var(--inv-col-year)
+  );
+  width: var(--inv-col-cond);
+  min-width: var(--inv-col-cond);
+  max-width: var(--inv-col-cond);
+}
+.vdp-inv-detail .vdp-inv-sticky--5 {
+  left: calc(
+    var(--inv-col-vin) + var(--inv-col-make) + var(--inv-col-model) +
+      var(--inv-col-year) + var(--inv-col-cond)
+  );
+  width: var(--inv-col-cat);
+  min-width: var(--inv-col-cat);
+  max-width: var(--inv-col-cat);
+}
+.vdp-inv-detail .vdp-inv-sticky--6 {
+  left: calc(
+    var(--inv-col-vin) + var(--inv-col-make) + var(--inv-col-model) +
+      var(--inv-col-year) + var(--inv-col-cond) + var(--inv-col-cat)
+  );
+  width: var(--inv-col-age);
+  min-width: var(--inv-col-age);
+  max-width: var(--inv-col-age);
+  box-shadow: 2px 0 4px rgba(15, 23, 42, 0.08);
+  border-right: 1px solid var(--vdp-border);
+}
+/* Keep VDP immediately after Age (no phantom gap while channels load) */
+.vdp-inv-detail th:not(.vdp-inv-sticky),
+.vdp-inv-detail td:not(.vdp-inv-sticky) {
+  min-width: 88px;
+}
+
 .vdp-table-scroll thead th {
   position: sticky;
   top: 0;
@@ -1738,6 +1823,15 @@
   padding-top: min(28vh, 220px);
   background: rgba(255, 255, 255, 0.55);
   pointer-events: all;
+}
+.vdp-load-card-overlay--freeze {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  align-items: center;
+  padding-top: 0;
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(2px);
 }
 .vdp-load-card {
   width: 120px;

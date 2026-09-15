@@ -61,10 +61,49 @@ function csvParam(value) {
   return parts.length ? parts.join(',') : '';
 }
 
-function matchVk(vin, stock) {
-  return String(vin || stock || '')
+function channelLookupKeys(vin, stock) {
+  const keys = [];
+  const v = String(vin || '')
     .trim()
     .toUpperCase();
+  const s = String(stock || '')
+    .trim()
+    .toUpperCase();
+  if (v && v !== '—' && v !== 'UNASSIGNED') keys.push(v);
+  if (s && s !== v) keys.push(s);
+  return keys;
+}
+
+function applyPriorMoM(rows, prior) {
+  const priorMap = new Map();
+  for (const row of prior || []) {
+    priorMap.set(row._key, row);
+  }
+  return (rows || []).map((row) => {
+    const prev = priorMap.get(row._key);
+    const vdp0 = prev?.views || 0;
+    const vdp1 = row.vdp1 ?? row.views ?? 0;
+    return {
+      ...row,
+      vdp1,
+      vdp0,
+      vdpmom: vdp0 > 0 ? ((vdp1 - vdp0) / vdp0) * 100 : vdp1 > 0 ? 100 : 0,
+    };
+  });
+}
+
+function attachChannelsToRows(rows, byVk) {
+  if (!byVk?.size) return rows;
+  return (rows || []).map((r) => {
+    let channelViews = r.channelViews || {};
+    for (const key of channelLookupKeys(r.vin, r.stock)) {
+      if (byVk.has(key)) {
+        channelViews = byVk.get(key) || {};
+        break;
+      }
+    }
+    return { ...r, channelViews };
+  });
 }
 
 async function fetchPeriod({
@@ -155,8 +194,8 @@ function optionLists(rows) {
 }
 
 /**
- * Inventory performance — paint current period ASAP (~3s target for big dealers).
- * Prior MoM + channel columns fill in the background without blocking first paint.
+ * Inventory performance — loads inventory, compare, and channels.
+ * onProgress reports stage completion; await resolves when every part is done.
  */
 export async function fetchInventoryPerformance({
   clientId,
@@ -172,6 +211,7 @@ export async function fetchInventoryPerformance({
   onCancelCheck,
   onCoreReady,
   onUpdate,
+  onProgress,
 }) {
   if (!clientId || !from || !to) {
     return { rows: [], makes: [], categories: [], channels: [], channelColumns: [] };
@@ -191,7 +231,20 @@ export async function fetchInventoryPerformance({
     search ||
     csvList(channel).length;
 
-  // 1) Current period only — this is what blocks the spinner.
+  const hasPrior = Boolean(priorFrom && priorTo);
+  const totalSteps = 1 + (hasPrior ? 1 : 0) + (needUnfiltered ? 1 : 0) + 1;
+  let completedSteps = 0;
+  const reportProgress = (stage) => {
+    onProgress?.({
+      completed: completedSteps,
+      total: totalSteps,
+      stage,
+      percent: Math.round((completedSteps / totalSteps) * 100),
+    });
+  };
+
+  reportProgress('inventory');
+
   const currentRes = await fetchPeriod({
     clientId,
     from,
@@ -213,13 +266,14 @@ export async function fetchInventoryPerformance({
     channels: [],
     channelColumns: [],
   };
+  completedSteps = 1;
+  reportProgress('inventory');
   onCoreReady?.(corePayload);
   onUpdate?.(corePayload);
 
-  // 2) Background: prior MoM + filter option lists + channel columns.
   const bg = [];
 
-  if (priorFrom && priorTo) {
+  if (hasPrior) {
     bg.push(
       fetchPeriod({
         clientId,
@@ -230,7 +284,9 @@ export async function fetchInventoryPerformance({
         onCancelCheck,
       }).then((priorRes) => {
         if (onCancelCheck?.()) return;
-        rows = mapRowsWithPrior(currentRes.rows || [], priorRes.rows || []);
+        rows = applyPriorMoM(rows, priorRes.rows || []);
+        completedSteps += 1;
+        reportProgress('compare');
         onUpdate?.({
           rows,
           makes,
@@ -260,6 +316,8 @@ export async function fetchInventoryPerformance({
         const opts = optionLists(unfilteredRes.rows || []);
         makes = opts.makes;
         categories = opts.categories;
+        completedSteps += 1;
+        reportProgress('filters');
         onUpdate?.({
           rows,
           makes,
@@ -286,23 +344,20 @@ export async function fetchInventoryPerformance({
         const channelColumns = chRes.channelColumns || [];
         corePayload.channels = channels;
         corePayload.channelColumns = channelColumns;
-        const byVk = new Map(
-          (chRes.channelMatrix || []).map((m) => [
-            String(m.vk || ''),
-            m.channel_views || {},
-          ])
-        );
-        if (byVk.size) {
-          rows = rows.map((r) => {
-            const vk = matchVk(r.vin, r.stock);
-            const channelViews = byVk.get(vk) || r.channelViews || {};
-            return { ...r, channelViews };
-          });
+        const byVk = new Map();
+        for (const m of chRes.channelMatrix || []) {
+          const views = m.channel_views || {};
+          const vk = String(m.vk || '').trim().toUpperCase();
+          if (vk) byVk.set(vk, views);
         }
+        rows = attachChannelsToRows(rows, byVk);
+        completedSteps += 1;
+        reportProgress('channels');
         onUpdate?.({ rows, makes, categories, channels, channelColumns });
       })
       .catch(() => {
-        /* channels optional */
+        completedSteps += 1;
+        reportProgress('channels');
       })
   );
 
@@ -310,6 +365,9 @@ export async function fetchInventoryPerformance({
   if (onCancelCheck?.()) {
     return { rows: [], makes: [], categories: [], channels: [], channelColumns: [] };
   }
+
+  completedSteps = totalSteps;
+  reportProgress('done');
 
   return {
     rows,

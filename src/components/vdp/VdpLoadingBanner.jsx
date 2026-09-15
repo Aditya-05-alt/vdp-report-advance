@@ -29,17 +29,28 @@ export function VdpLoadingBlock({ label = 'Loading…', minHeight = 120 }) {
 }
 
 /**
- * Centered white card loader — All Dealers only.
+ * Centered white card loader.
  * Shows "Loading..." plus percent in primary blue.
+ * freeze=true covers the viewport and blocks interaction until dismissed.
  */
-export function VdpLoadingCard({ active, label = 'Loading...', percent = null }) {
+export function VdpLoadingCard({
+  active,
+  label = 'Loading...',
+  percent = null,
+  freeze = false,
+}) {
   if (!active) return null;
   const pct =
     percent == null || Number.isNaN(Number(percent))
       ? null
       : Math.max(0, Math.min(100, Math.round(Number(percent))));
   return (
-    <div className="vdp-load-card-overlay" role="status" aria-live="polite" aria-busy="true">
+    <div
+      className={`vdp-load-card-overlay${freeze ? ' vdp-load-card-overlay--freeze' : ''}`}
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
+    >
       <div className="vdp-load-card">
         <span className="vdp-load-card-spinner" aria-hidden="true" />
         <span className="vdp-load-card-label">{label}</span>

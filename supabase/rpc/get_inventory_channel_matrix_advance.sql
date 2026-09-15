@@ -1,6 +1,6 @@
 -- Per-vehicle VDP views by GA4 channel (Inventory Performance channel columns).
--- Fast path: filter on vdp_conditions (index-friendly), no DISTINCT ON.
--- Loaded in a background request so core Inventory KPIs paint first.
+-- Optimized: final_data pages → index-join GA4. Local vars + force_custom_plan
+-- so Postgres uses client/date indexes (A&L ~sub-second warm vs prior ~30s).
 
 CREATE OR REPLACE FUNCTION public.get_inventory_channel_matrix_advance(
   p_client_id  text,
@@ -17,65 +17,72 @@ RETURNS TABLE (
   channel_bucket   text,
   views            bigint
 )
-LANGUAGE sql
+LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = public
-AS $$
-  WITH
-  cid AS (SELECT trim(p_client_id) AS id),
-  make_keys AS (
-    SELECT COALESCE(ARRAY(
-      SELECT DISTINCT lower(trim(x)) FROM unnest(string_to_array(COALESCE(p_make, ''), ',')) AS x
-      WHERE NULLIF(lower(trim(x)), '') IS NOT NULL AND NULLIF(lower(trim(x)), '') <> 'all'
-    ), ARRAY[]::text[]) AS keys
-  ),
-  cond_keys AS (
-    SELECT COALESCE(ARRAY(
-      SELECT DISTINCT lower(trim(x)) FROM unnest(string_to_array(COALESCE(p_condition, ''), ',')) AS x
-      WHERE NULLIF(lower(trim(x)), '') IS NOT NULL AND NULLIF(lower(trim(x)), '') <> 'all'
-    ), ARRAY[]::text[]) AS keys
-  ),
-  cat_keys AS (
-    SELECT COALESCE(ARRAY(
-      SELECT DISTINCT lower(trim(x)) FROM unnest(string_to_array(COALESCE(p_category, ''), ',')) AS x
-      WHERE NULLIF(lower(trim(x)), '') IS NOT NULL AND NULLIF(lower(trim(x)), '') <> 'all'
-    ), ARRAY[]::text[]) AS keys
-  ),
-  page_vehicle AS (
+SET plan_cache_mode = force_custom_plan
+AS $function$
+DECLARE
+  v_cid text := trim(p_client_id);
+  v_make text[] := COALESCE(ARRAY(
+    SELECT DISTINCT lower(trim(x)) FROM unnest(string_to_array(COALESCE(p_make, ''), ',')) AS x
+    WHERE NULLIF(lower(trim(x)), '') IS NOT NULL AND NULLIF(lower(trim(x)), '') <> 'all'
+  ), ARRAY[]::text[]);
+  v_cond text[] := COALESCE(ARRAY(
+    SELECT DISTINCT lower(trim(x)) FROM unnest(string_to_array(COALESCE(p_condition, ''), ',')) AS x
+    WHERE NULLIF(lower(trim(x)), '') IS NOT NULL AND NULLIF(lower(trim(x)), '') <> 'all'
+  ), ARRAY[]::text[]);
+  v_cat text[] := COALESCE(ARRAY(
+    SELECT DISTINCT lower(trim(x)) FROM unnest(string_to_array(COALESCE(p_category, ''), ',')) AS x
+    WHERE NULLIF(lower(trim(x)), '') IS NOT NULL AND NULLIF(lower(trim(x)), '') <> 'all'
+  ), ARRAY[]::text[]);
+  v_search text := NULLIF(trim(COALESCE(p_search, '')), '');
+BEGIN
+  RETURN QUERY
+  WITH page_vehicle AS (
     SELECT
-      f.client_id, f.report_date, f.page_path,
+      f.client_id,
+      f.report_date,
+      f.page_path,
       NULLIF(TRIM(f.inv_vin), '') AS inv_vin,
       NULLIF(TRIM(f.inv_stock_number), '') AS inv_stock_number,
-      UPPER(COALESCE(NULLIF(TRIM(f.inv_vin), ''), NULLIF(TRIM(f.inv_stock_number), ''), '__UNASSIGNED__')) AS vk,
+      UPPER(
+        COALESCE(
+          NULLIF(TRIM(f.inv_vin), ''),
+          NULLIF(TRIM(f.inv_stock_number), ''),
+          '__UNASSIGNED__'
+        )
+      ) AS vk,
       COALESCE(f.views, 0)::bigint AS final_views
     FROM public.smart_final_data f
-    CROSS JOIN cid
-    CROSS JOIN make_keys mk
-    CROSS JOIN cond_keys ck
-    CROSS JOIN cat_keys tk
-    WHERE f.client_id = cid.id
+    WHERE f.client_id = v_cid
       AND f.report_date BETWEEN p_from AND p_to
-      AND f.vdp_conditions IS TRUE
       AND COALESCE(f.views, 0) > 0
-      AND (cardinality(mk.keys) = 0 OR lower(trim(COALESCE(f.inv_make, ''))) = ANY (mk.keys))
-      AND (cardinality(ck.keys) = 0 OR lower(trim(COALESCE(f.inv_condition, ''))) = ANY (ck.keys))
+      AND (cardinality(v_make) = 0 OR lower(trim(COALESCE(f.inv_make, ''))) = ANY (v_make))
+      AND (cardinality(v_cond) = 0 OR lower(trim(COALESCE(f.inv_condition, ''))) = ANY (v_cond))
       AND (
-        cardinality(tk.keys) = 0
-        OR lower(trim(COALESCE(NULLIF(TRIM(f.inv_custom_type), ''), NULLIF(TRIM(f.inv_type), ''), ''))) = ANY (tk.keys)
+        cardinality(v_cat) = 0
+        OR lower(trim(COALESCE(NULLIF(TRIM(f.inv_custom_type), ''), NULLIF(TRIM(f.inv_type), ''), ''))) = ANY (v_cat)
       )
       AND (
-        NULLIF(trim(COALESCE(p_search, '')), '') IS NULL
-        OR f.inv_vin ILIKE '%' || trim(p_search) || '%'
-        OR f.inv_stock_number ILIKE '%' || trim(p_search) || '%'
-        OR f.inv_make ILIKE '%' || trim(p_search) || '%'
-        OR f.inv_model ILIKE '%' || trim(p_search) || '%'
-        OR 'unassigned' ILIKE '%' || lower(trim(p_search)) || '%'
+        v_search IS NULL
+        OR f.inv_vin ILIKE '%' || v_search || '%'
+        OR f.inv_stock_number ILIKE '%' || v_search || '%'
+        OR f.inv_make ILIKE '%' || v_search || '%'
+        OR f.inv_model ILIKE '%' || v_search || '%'
+        OR 'unassigned' ILIKE '%' || lower(v_search) || '%'
       )
   ),
-  ga4_ch AS (
+  page_ch AS (
     SELECT
-      g.client_id, g.report_date, g.page_path,
+      pv.vk,
+      pv.inv_vin,
+      pv.inv_stock_number,
+      pv.final_views,
+      pv.client_id,
+      pv.report_date,
+      pv.page_path,
       CASE lower(trim(COALESCE(g.channel, '')))
         WHEN 'organic_search' THEN 'Organic Search'
         WHEN 'paid_search' THEN 'Paid Search'
@@ -98,40 +105,56 @@ AS $$
         ELSE initcap(replace(replace(lower(trim(g.channel)), '_', ' '), '-', ' '))
       END AS channel_bucket,
       SUM(COALESCE(g.views, 0))::bigint AS ch_views
-    FROM public.smart_ga4_page_data g
-    CROSS JOIN cid
-    WHERE g.client_id = cid.id
+    FROM page_vehicle pv
+    INNER JOIN public.smart_ga4_page_data g
+      ON g.client_id = pv.client_id
+     AND g.report_date = pv.report_date
+     AND g.page_path = pv.page_path
+    WHERE g.client_id = v_cid
       AND g.report_date BETWEEN p_from AND p_to
-      AND g.vdp_conditions IS TRUE
-    GROUP BY 1, 2, 3, 4
+    GROUP BY
+      pv.vk,
+      pv.inv_vin,
+      pv.inv_stock_number,
+      pv.final_views,
+      pv.client_id,
+      pv.report_date,
+      pv.page_path,
+      8
   ),
-  ga4_tot AS (
-    SELECT client_id, report_date, page_path, SUM(ch_views)::bigint AS tot_views
-    FROM ga4_ch GROUP BY 1, 2, 3
+  page_tot AS (
+    SELECT
+      client_id,
+      report_date,
+      page_path,
+      SUM(ch_views)::bigint AS tot_views
+    FROM page_ch
+    GROUP BY 1, 2, 3
   )
   SELECT
-    CASE WHEN pv.vk = '__UNASSIGNED__' THEN 'Unassigned' ELSE MAX(pv.inv_vin) END AS inv_vin,
-    MAX(pv.inv_stock_number) AS inv_stock_number,
-    gc.channel_bucket,
+    CASE WHEN pc.vk = '__UNASSIGNED__' THEN 'Unassigned' ELSE MAX(pc.inv_vin) END,
+    MAX(pc.inv_stock_number),
+    pc.channel_bucket,
     ROUND(SUM(
-      CASE WHEN COALESCE(gt.tot_views, 0) <= 0 THEN 0::numeric
-           ELSE pv.final_views::numeric * (gc.ch_views::numeric / gt.tot_views::numeric)
+      CASE WHEN COALESCE(pt.tot_views, 0) <= 0 THEN 0::numeric
+           ELSE pc.final_views::numeric * (pc.ch_views::numeric / pt.tot_views::numeric)
       END
-    ))::bigint AS views
-  FROM page_vehicle pv
-  INNER JOIN ga4_ch gc
-    ON gc.client_id = pv.client_id AND gc.report_date = pv.report_date AND gc.page_path = pv.page_path
-  INNER JOIN ga4_tot gt
-    ON gt.client_id = pv.client_id AND gt.report_date = pv.report_date AND gt.page_path = pv.page_path
-  WHERE gc.channel_bucket IS NOT NULL
-  GROUP BY pv.vk, gc.channel_bucket
+    ))::bigint
+  FROM page_ch pc
+  INNER JOIN page_tot pt
+    ON pt.client_id = pc.client_id
+   AND pt.report_date = pc.report_date
+   AND pt.page_path = pc.page_path
+  WHERE pc.channel_bucket IS NOT NULL
+  GROUP BY pc.vk, pc.channel_bucket
   HAVING ROUND(SUM(
-      CASE WHEN COALESCE(gt.tot_views, 0) <= 0 THEN 0::numeric
-           ELSE pv.final_views::numeric * (gc.ch_views::numeric / gt.tot_views::numeric)
+      CASE WHEN COALESCE(pt.tot_views, 0) <= 0 THEN 0::numeric
+           ELSE pc.final_views::numeric * (pc.ch_views::numeric / pt.tot_views::numeric)
       END
     )) > 0
-  ORDER BY pv.vk, 4 DESC;
-$$;
+  ORDER BY pc.vk, 4 DESC;
+END;
+$function$;
 
 GRANT EXECUTE ON FUNCTION public.get_inventory_channel_matrix_advance(
   text, date, date, text, text, text, text

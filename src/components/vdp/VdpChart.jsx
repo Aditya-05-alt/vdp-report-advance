@@ -43,6 +43,20 @@ function prefersReducedMotion() {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
+/**
+ * Deep copy that keeps functions (tooltip/tick callbacks) by reference.
+ * JSON round-trips drop them, which silently disabled every callback.
+ */
+function cloneKeepingFns(value) {
+  if (Array.isArray(value)) return value.map(cloneKeepingFns);
+  if (value && typeof value === 'object' && value.constructor === Object) {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) out[k] = cloneKeepingFns(v);
+    return out;
+  }
+  return value;
+}
+
 function buildOptions(type, parsedOptions, fill, animate) {
   const userAnim = parsedOptions.animation;
   const { animation: _a, transitions: _t, ...rest } = parsedOptions;
@@ -112,8 +126,11 @@ export default function VdpChart({
   const chartRef = useRef(null);
   const typeRef = useRef(type);
   const readyRef = useRef(false);
+  const optionsRef = useRef(options);
   const dataKey = JSON.stringify(data);
   const optionsKey = JSON.stringify(options || {});
+
+  optionsRef.current = options;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -126,7 +143,12 @@ export default function VdpChart({
 
     const parsedData = () => JSON.parse(dataKey);
     const nextOptions = () =>
-      buildOptions(type, JSON.parse(optionsKey), fill, shouldAnimate);
+      buildOptions(
+        type,
+        cloneKeepingFns(optionsRef.current || {}),
+        fill,
+        shouldAnimate
+      );
 
     const createChart = () => {
       if (cancelled || !canvasRef.current) return;

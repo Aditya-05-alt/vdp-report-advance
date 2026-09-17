@@ -38,6 +38,14 @@ function fmtAge(age) {
   return age == null ? '—' : `${age}d`;
 }
 
+/** Units plotted in a chart (sum of the per-bar unit counts). */
+function chartUnitTotal(chartData) {
+  return (chartData?.datasets || []).reduce(
+    (sum, ds) => sum + (ds.units || []).reduce((a, b) => a + (Number(b) || 0), 0),
+    0
+  );
+}
+
 function channelSortValue(row, key) {
   if (String(key).startsWith('ch:')) {
     const name = String(key).slice(3);
@@ -222,7 +230,7 @@ export default function InventoryView() {
       ['model', 'Model'],
       ['year', 'Year'],
       ['condition', 'Cond.'],
-      ['category', 'Category'],
+      ['category', 'Type'],
       ['age', 'Age'],
       ['vdp1', 'VDP (Current)'],
     ],
@@ -241,16 +249,41 @@ export default function InventoryView() {
   const totalVdp0 = sorted.reduce((s, r) => s + r.vdp0, 0);
   const zeroView = sorted.filter((r) => r.vdp1 < 1).length;
 
+  /** Grand totals per channel column for the table footer. */
+  const channelTotals = useMemo(() => {
+    const totals = new Map(visibleChannelColumns.map((ch) => [ch, 0]));
+    for (const r of sorted) {
+      for (const ch of visibleChannelColumns) {
+        totals.set(ch, totals.get(ch) + (Number(r.channelViews?.[ch]) || 0));
+      }
+    }
+    return totals;
+  }, [sorted, visibleChannelColumns]);
+
   const makeData = useMemo(() => {
     const byMake = new Map();
     for (const r of sorted) {
       const name = r.make || 'Unknown';
-      if (!byMake.has(name)) byMake.set(name, { name, neu: 0, used: 0, total: 0 });
+      if (!byMake.has(name)) {
+        byMake.set(name, {
+          name,
+          neu: 0,
+          used: 0,
+          total: 0,
+          neuUnits: 0,
+          usedUnits: 0,
+        });
+      }
       const bucket = byMake.get(name);
       const views = Number(r.vdp1) || 0;
       const cond = String(r.condition || '').toLowerCase();
-      if (cond.startsWith('new')) bucket.neu += views;
-      else bucket.used += views;
+      if (cond.startsWith('new')) {
+        bucket.neu += views;
+        bucket.neuUnits += 1;
+      } else {
+        bucket.used += views;
+        bucket.usedUnits += 1;
+      }
       bucket.total += views;
     }
 
@@ -265,12 +298,14 @@ export default function InventoryView() {
         {
           label: 'New',
           data: totals.map((r) => r.neu),
+          units: totals.map((r) => r.neuUnits),
           backgroundColor: '#16a34a',
           borderRadius: 4,
         },
         {
           label: 'Used',
           data: totals.map((r) => r.used),
+          units: totals.map((r) => r.usedUnits),
           backgroundColor: '#3730a3',
           borderRadius: 4,
         },
@@ -288,8 +323,10 @@ export default function InventoryView() {
         },
         tooltip: {
           callbacks: {
-            label: (ctx) =>
-              ` ${ctx.dataset.label}: ${fmt(ctx.parsed.y)} VDP views`,
+            label: (ctx) => {
+              const units = Number(ctx.dataset.units?.[ctx.dataIndex]) || 0;
+              return ` ${ctx.dataset.label}: ${fmt(ctx.parsed.y)} VDP views · ${fmt(units)} units`;
+            },
           },
         },
       },
@@ -322,12 +359,14 @@ export default function InventoryView() {
 
   const catData = useMemo(() => {
     const totals = catNames
-      .map((c) => ({
-        name: c,
-        value: sorted
-          .filter((r) => r.category === c)
-          .reduce((s, r) => s + r.vdp1, 0),
-      }))
+      .map((c) => {
+        const inType = sorted.filter((r) => r.category === c);
+        return {
+          name: c,
+          value: inType.reduce((s, r) => s + r.vdp1, 0),
+          units: inType.length,
+        };
+      })
       .filter((r) => r.value > 0)
       .sort((a, b) => b.value - a.value)
       .slice(0, 10);
@@ -339,6 +378,7 @@ export default function InventoryView() {
         {
           label: 'VDP Views',
           data: totals.map((r) => r.value),
+          units: totals.map((r) => r.units),
           backgroundColor: totals.map((r) => {
             const t = r.value / max;
             return `rgba(8, 145, 178, ${0.45 + t * 0.5})`;
@@ -369,7 +409,10 @@ export default function InventoryView() {
           padding: 10,
           cornerRadius: 8,
           callbacks: {
-            label: (ctx) => ` ${fmt(ctx.parsed.x)} VDP views`,
+            label: (ctx) => {
+              const units = Number(ctx.dataset.units?.[ctx.dataIndex]) || 0;
+              return ` ${fmt(ctx.parsed.x)} VDP views · ${fmt(units)} units`;
+            },
           },
         },
       },
@@ -397,6 +440,9 @@ export default function InventoryView() {
     }),
     []
   );
+
+  const makeUnits = useMemo(() => chartUnitTotal(makeData), [makeData]);
+  const catUnits = useMemo(() => chartUnitTotal(catData), [catData]);
 
   const onSort = (k, dir) => {
     setSort((prev) => {
@@ -461,10 +507,10 @@ export default function InventoryView() {
             searchable={false}
           />
         </ToolbarGroup>
-        <ToolbarGroup label="Category">
+        <ToolbarGroup label="Type">
           <VdpMultiFilter
-            allLabel="All Categories"
-            noun="categories"
+            allLabel="All Types"
+            noun="types"
             options={catOptions}
             selected={cats}
             onChange={setCats}
@@ -524,6 +570,9 @@ export default function InventoryView() {
           className="vdp-card--chart"
           title="VDP Views by Make"
           sub="New vs Used · top makes by VDP (current period)"
+          actions={
+            <span className="vdp-chart-units">{fmt(makeUnits)} units</span>
+          }
         >
           {!(makeData.labels || []).length ? (
             <div style={{ color: 'var(--vdp-muted)', fontSize: 13, padding: 12 }}>
@@ -542,12 +591,13 @@ export default function InventoryView() {
         </Card>
         <Card
           className="vdp-card--chart"
-          title="VDP Views by Category"
-          sub="Current comparison period · top categories"
+          title="VDP Views by Types"
+          sub="Current comparison period · top types"
+          actions={<span className="vdp-chart-units">{fmt(catUnits)} units</span>}
         >
           {!(catData.labels || []).length ? (
             <div style={{ color: 'var(--vdp-muted)', fontSize: 13, padding: 12 }}>
-              No category data for these filters.
+              No type data for these filters.
             </div>
           ) : (
             <VdpChart
@@ -571,10 +621,9 @@ export default function InventoryView() {
             </span>
           </>
         }
-        sub="VDP total + views by channel · scroll horizontally for all channels"
       >
         <>
-            <div className="vdp-table-scroll vdp-table-scroll--15">
+            <div className="vdp-table-scroll vdp-table-scroll--15 vdp-table-scroll--total">
               <table
                 className="vdp-table vdp-inv-detail"
                 style={{
@@ -708,6 +757,30 @@ export default function InventoryView() {
                     ))
                   )}
                 </tbody>
+                {sorted.length > 0 && (
+                  <tfoot>
+                    <tr>
+                      <td className="vdp-inv-sticky vdp-inv-sticky--0">
+                        Grand Total
+                      </td>
+                      <td className="vdp-inv-sticky vdp-inv-sticky--1" />
+                      <td className="vdp-inv-sticky vdp-inv-sticky--2" />
+                      <td className="vdp-inv-sticky vdp-inv-sticky--3" />
+                      <td className="vdp-inv-sticky vdp-inv-sticky--4" />
+                      <td className="vdp-inv-sticky vdp-inv-sticky--5" />
+                      <td className="right mono vdp-inv-sticky vdp-inv-sticky--6" />
+                      <td className="right mono">{fmt(totalVdp1)}</td>
+                      {visibleChannelColumns.map((ch) => {
+                        const n = Number(channelTotals.get(ch)) || 0;
+                        return (
+                          <td key={`total:${ch}`} className="right mono">
+                            {n > 0 ? fmt(n) : '—'}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             </div>
             {sorted.length > VISIBLE_ROWS && (

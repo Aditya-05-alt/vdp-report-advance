@@ -314,40 +314,64 @@ export default function InventoryView() {
       makeLimit
     );
 
+    const hasNew = totals.some((r) => r.neu > 0);
+    const hasUsed = totals.some((r) => r.used > 0);
+    const datasets = [];
+    if (hasNew) {
+      datasets.push({
+        label: 'New',
+        // null = skip drawing when that make has no New inventory
+        data: totals.map((r) => (r.neu > 0 ? r.neu : null)),
+        units: totals.map((r) => (r.neu > 0 ? r.neuUnits : 0)),
+        backgroundColor: '#16a34a',
+        borderRadius: 4,
+        stack: 'cond',
+      });
+    }
+    if (hasUsed) {
+      datasets.push({
+        label: 'Used',
+        data: totals.map((r) => (r.used > 0 ? r.used : null)),
+        units: totals.map((r) => (r.used > 0 ? r.usedUnits : 0)),
+        backgroundColor: '#3730a3',
+        borderRadius: 4,
+        stack: 'cond',
+      });
+    }
+
     return {
       labels: totals.map((r) => r.name),
-      datasets: [
-        {
-          label: 'New',
-          data: totals.map((r) => r.neu),
-          units: totals.map((r) => r.neuUnits),
-          backgroundColor: '#16a34a',
-          borderRadius: 4,
-        },
-        {
-          label: 'Used',
-          data: totals.map((r) => r.used),
-          units: totals.map((r) => r.usedUnits),
-          backgroundColor: '#3730a3',
-          borderRadius: 4,
-        },
-      ],
+      datasets,
     };
   }, [sorted, makeLimit]);
 
   const makeOptionsChart = useMemo(
     () => ({
       layout: { padding: { top: 4, right: 8, bottom: 0, left: 0 } },
+      // Nearest category column — works even when bars are 1px wide at the tail.
+      interaction: { mode: 'index', intersect: false, axis: 'x' },
+      hover: { mode: 'index', intersect: false, axis: 'x' },
       plugins: {
         legend: {
           position: 'bottom',
           labels: { boxWidth: 12, boxHeight: 12, padding: 12, font: { size: 11 } },
         },
         tooltip: {
+          enabled: true,
+          mode: 'index',
+          intersect: false,
+          position: 'nearest',
+          filter: (item) => {
+            const v = item.parsed?.y;
+            return v != null && Number(v) > 0;
+          },
+          itemSort: (a, b) => (Number(b.parsed?.y) || 0) - (Number(a.parsed?.y) || 0),
           callbacks: {
             label: (ctx) => {
+              const v = ctx.parsed?.y;
+              if (v == null || Number(v) <= 0) return null;
               const units = Number(ctx.dataset.units?.[ctx.dataIndex]) || 0;
-              return ` ${ctx.dataset.label}: ${fmt(ctx.parsed.y)} VDP views · ${fmt(units)} units`;
+              return ` ${ctx.dataset.label}: ${fmt(v)} VDP views · ${fmt(units)} units`;
             },
           },
         },
@@ -367,6 +391,7 @@ export default function InventoryView() {
         },
         y: {
           stacked: true,
+          beginAtZero: true,
           grid: { color: 'rgba(148, 163, 184, 0.25)', drawBorder: false },
           border: { display: false },
           ticks: {
@@ -430,18 +455,30 @@ export default function InventoryView() {
     () => ({
       indexAxis: 'y',
       layout: { padding: { top: 4, right: 28, bottom: 4, left: 0 } },
+      interaction: { mode: 'index', intersect: false, axis: 'y' },
+      hover: { mode: 'index', intersect: false, axis: 'y' },
       plugins: {
         legend: { display: false },
         tooltip: {
+          enabled: true,
+          mode: 'index',
+          intersect: false,
+          position: 'nearest',
           backgroundColor: '#0f172a',
           titleFont: { size: 12, weight: '600' },
           bodyFont: { size: 12 },
           padding: 10,
           cornerRadius: 8,
+          filter: (item) => {
+            const v = item.parsed?.x;
+            return v != null && Number(v) > 0;
+          },
           callbacks: {
             label: (ctx) => {
+              const v = ctx.parsed?.x;
+              if (v == null || Number(v) <= 0) return null;
               const units = Number(ctx.dataset.units?.[ctx.dataIndex]) || 0;
-              return ` ${fmt(ctx.parsed.x)} VDP views · ${fmt(units)} units`;
+              return ` ${fmt(v)} VDP views · ${fmt(units)} units`;
             },
           },
         },

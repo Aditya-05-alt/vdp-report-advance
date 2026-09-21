@@ -124,6 +124,73 @@ async function fetchChannelViewsMap(supabase, params) {
   return { ...pivotChannelViewsMap(data || {}), error: null };
 }
 
+/** Inclusive YYYY-MM-DD days between from/to (UTC). */
+function eachYmd(from, to) {
+  const out = [];
+  const start = ymd(from);
+  const end = ymd(to);
+  if (!start || !end || end < start) return out;
+  let t = Date.parse(`${start}T00:00:00Z`);
+  const endT = Date.parse(`${end}T00:00:00Z`);
+  while (t <= endT) {
+    out.push(new Date(t).toISOString().slice(0, 10));
+    t += 86400000;
+  }
+  return out;
+}
+
+/**
+ * Large dealers (A&L): full-range channel join is I/O heavy.
+ * Day chunks hit the covering VDP index (~0.4s/day) and merge in parallel.
+ */
+async function fetchChannelViewsMapChunked(supabase, params) {
+  const days = eachYmd(params.p_from, params.p_to);
+  if (days.length <= 3) {
+    return fetchChannelViewsMap(supabase, params);
+  }
+
+  const byKey = new Map();
+  const totals = new Map();
+  let firstError = null;
+  const concurrency = 5;
+
+  for (let i = 0; i < days.length; i += concurrency) {
+    const batch = days.slice(i, i + concurrency);
+    const parts = await Promise.all(
+      batch.map((day) =>
+        fetchChannelViewsMap(supabase, {
+          ...params,
+          p_from: day,
+          p_to: day,
+        })
+      )
+    );
+    for (const part of parts) {
+      if (part.error && !firstError) firstError = part.error;
+      for (const [vk, channels] of part.byKey || []) {
+        const bucket = byKey.get(vk) || {};
+        for (const [channel, viewsRaw] of Object.entries(channels || {})) {
+          const views = Number(viewsRaw) || 0;
+          if (!channel || views <= 0) continue;
+          bucket[channel] = (bucket[channel] || 0) + views;
+          totals.set(channel, (totals.get(channel) || 0) + views);
+        }
+        byKey.set(vk, bucket);
+      }
+    }
+  }
+
+  if (!byKey.size && firstError) {
+    return { byKey, columns: [], error: firstError };
+  }
+
+  const columns = [...totals.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([name]) => name);
+
+  return { byKey, columns, error: null };
+}
+
 function attachChannelViews(rows, channelByKey) {
   return (rows || []).map((r) => {
     const vk = vehicleMatchKey(r.inv_vin, r.inv_stock_number);
@@ -337,10 +404,8 @@ export async function GET(request) {
       p_category: category,
       p_search: search || null,
     };
-    const { byKey, columns: channelColumns, error } = await fetchChannelViewsMap(
-      supabase,
-      channelParams
-    );
+    const { byKey, columns: channelColumns, error } =
+      await fetchChannelViewsMapChunked(supabase, channelParams);
     if (error) {
       console.warn(
         '[inventory-performance-advance] channel views map:',
@@ -415,7 +480,7 @@ export async function GET(request) {
   ];
   if (wantChannels) {
     tasks.push(
-      fetchChannelViewsMap(supabase, {
+      fetchChannelViewsMapChunked(supabase, {
         p_client_id: clientId,
         p_from: from,
         p_to: to,

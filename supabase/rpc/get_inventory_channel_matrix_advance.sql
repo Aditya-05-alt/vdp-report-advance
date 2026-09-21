@@ -1,6 +1,6 @@
 -- Per-vehicle VDP views by GA4 channel (Inventory Performance channel columns).
--- Optimized: final_data pages → index-join GA4. Local vars + force_custom_plan
--- so Postgres uses client/date indexes (A&L ~sub-second warm vs prior ~30s).
+-- Hash-join a VDP-only GA4 slice (uses idx_ga4_al_vdp_date_path_ch for A&L).
+-- Prefer day-chunked callers for large ranges (~400ms/day vs multi-second full range).
 
 CREATE OR REPLACE FUNCTION public.get_inventory_channel_matrix_advance(
   p_client_id  text,
@@ -39,8 +39,13 @@ DECLARE
   ), ARRAY[]::text[]);
   v_search text := NULLIF(trim(COALESCE(p_search, '')), '');
 BEGIN
+  -- Covering VDP index → hash join beats 10k nestloop probes on large dealers.
+  PERFORM set_config('enable_nestloop', 'off', true);
+  PERFORM set_config('enable_hashjoin', 'on', true);
+  PERFORM set_config('work_mem', '128MB', true);
+
   RETURN QUERY
-  WITH page_vehicle AS (
+  WITH page_vehicle AS MATERIALIZED (
     SELECT
       f.client_id,
       f.report_date,
@@ -74,6 +79,18 @@ BEGIN
         OR 'unassigned' ILIKE '%' || lower(v_search) || '%'
       )
   ),
+  ga4_slice AS MATERIALIZED (
+    SELECT
+      g.client_id,
+      g.report_date,
+      g.page_path,
+      g.channel,
+      COALESCE(g.views, 0)::bigint AS views
+    FROM public.smart_ga4_page_data g
+    WHERE g.client_id = v_cid
+      AND g.vdp_conditions IS TRUE
+      AND g.report_date BETWEEN p_from AND p_to
+  ),
   page_ch AS (
     SELECT
       pv.vk,
@@ -104,14 +121,12 @@ BEGIN
         WHEN '' THEN '(not set)'
         ELSE initcap(replace(replace(lower(trim(g.channel)), '_', ' '), '-', ' '))
       END AS channel_bucket,
-      SUM(COALESCE(g.views, 0))::bigint AS ch_views
+      SUM(g.views)::bigint AS ch_views
     FROM page_vehicle pv
-    INNER JOIN public.smart_ga4_page_data g
+    INNER JOIN ga4_slice g
       ON g.client_id = pv.client_id
      AND g.report_date = pv.report_date
      AND g.page_path = pv.page_path
-    WHERE g.client_id = v_cid
-      AND g.report_date BETWEEN p_from AND p_to
     GROUP BY
       pv.vk,
       pv.inv_vin,

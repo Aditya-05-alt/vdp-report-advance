@@ -1837,20 +1837,20 @@
   z-index: 1;
 }
 
-/* All Dealers ? single centered card loader (not per-card) */
+/* All Dealers / dealer tabs — centered card loader over the view */
 .vdp-view--card-loading {
   position: relative;
-  min-height: 280px;
+  min-height: min(70vh, 640px);
 }
 .vdp-load-card-overlay {
   position: absolute;
   inset: 0;
-  z-index: 20;
+  z-index: 40;
   display: flex;
   align-items: flex-start;
   justify-content: center;
   padding-top: min(28vh, 220px);
-  background: rgba(255, 255, 255, 0.55);
+  background: rgba(255, 255, 255, 0.72);
   pointer-events: all;
 }
 .vdp-load-card-overlay--freeze {
@@ -1863,8 +1863,8 @@
   backdrop-filter: blur(2px);
 }
 .vdp-load-card {
-  width: 120px;
-  min-height: 120px;
+  width: 128px;
+  min-height: 128px;
   padding: 18px 14px 14px;
   border-radius: 10px;
   background: #fff;
@@ -1882,6 +1882,7 @@
   border: 3px solid #bfdbfe;
   border-top-color: #2563eb;
   animation: vdp-spin 0.75s linear infinite;
+  flex-shrink: 0;
 }
 .vdp-load-card-label {
   font-size: 13px;

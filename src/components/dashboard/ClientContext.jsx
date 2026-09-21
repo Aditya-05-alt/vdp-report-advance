@@ -8,14 +8,12 @@ import {
   useMemo,
   useEffect,
 } from 'react';
-import { usePathname } from 'next/navigation';
 import { CATEGORIES } from '@/lib/data/categories';
 import { createClient } from '@/lib/supabase/client';
 import {
-  dealerScopeFromPathname,
-  readStoredDealerIdForScope,
-  resolveDealerForScope,
-  writeStoredDealerIdForScope,
+  readStoredDealerId,
+  resolveDealerFromList,
+  writeStoredDealerId,
 } from '@/lib/dashboard/dashboardPrefs';
 import { ALL_DEALER_CLIENT, isAllDealerClient } from '@/lib/dashboard/allDealers';
 import { DEFAULT_ACCESS } from '@/lib/access/permissions';
@@ -75,12 +73,6 @@ function filterDealersByCategory(dealers, categoryFilter) {
 }
 
 export function ClientProvider({ children }) {
-  const pathname = usePathname();
-  const dealerScope = useMemo(
-    () => dealerScopeFromPathname(pathname),
-    [pathname],
-  );
-
   const [allDealers, setAllDealers] = useState([]);
   const [dealerCategoryFilter, setDealerCategoryFilterState] = useState('');
   const [client, setClient] = useState(ALL_DEALER_CLIENT);
@@ -184,8 +176,8 @@ export function ClientProvider({ children }) {
       return;
     }
 
-    const storedId = readStoredDealerIdForScope(dealerScope);
-    let resolved = resolveDealerForScope(dealers, dealerScope, storedId);
+    const storedId = readStoredDealerId();
+    let resolved = resolveDealerFromList(dealers, storedId);
 
     if (canUseAllDealers === false && isAllDealerClient(resolved)) {
       resolved = dealers[0] || allDealers[0] || ALL_DEALER_CLIENT;
@@ -202,11 +194,20 @@ export function ClientProvider({ children }) {
         : dealers[0] || ALL_DEALER_CLIENT;
     }
 
-    setClient(resolved);
+    setClient((prev) => {
+      if (
+        prev &&
+        resolved &&
+        String(prev.id) === String(resolved.id) &&
+        String(prev.ga4CustomerId || '') === String(resolved.ga4CustomerId || '')
+      ) {
+        return prev;
+      }
+      return resolved;
+    });
   }, [
     allDealers,
     dealers,
-    dealerScope,
     access,
     canUseAllDealers,
     loading,
@@ -215,8 +216,8 @@ export function ClientProvider({ children }) {
 
   const pickClient = useCallback((c) => {
     setClient(c);
-    if (c?.id != null) writeStoredDealerIdForScope(dealerScope, c.id);
-  }, [dealerScope]);
+    if (c?.id != null) writeStoredDealerId(c.id);
+  }, []);
 
   const isAllDealer = isAllDealerClient(client);
 

@@ -9,6 +9,7 @@ import { isAllDealerClient } from '@/lib/dashboard/allDealers';
 import VdpChart from './VdpChart';
 import { VdpLoadingCard } from './VdpLoadingBanner';
 import { useVdpDateRange } from './VdpDateRangeContext';
+import { useSoftLoadPercent } from './useSoftLoadPercent';
 import { Card, Kpi, Toolbar, ToolbarGroup, VdpMultiFilter } from './VdpUi';
 
 const COND_OPTS = [
@@ -17,6 +18,23 @@ const COND_OPTS = [
 ];
 
 const VISIBLE_ROWS = 15;
+
+const CHART_LIMIT_OPTS = [
+  { value: 'all', label: 'All' },
+  { value: '15', label: 'Top 15' },
+  { value: '10', label: 'Top 10' },
+];
+
+function chartLimitN(limit) {
+  if (limit === '15') return 15;
+  if (limit === '10') return 10;
+  return null;
+}
+
+function applyChartLimit(rows, limit) {
+  const n = chartLimitN(limit);
+  return n == null ? rows : rows.slice(0, n);
+}
 
 const LOAD_STAGE_LABEL = {
   inventory: 'Loading inventory…',
@@ -36,14 +54,6 @@ function conditionClass(condition) {
 /** Days on lot (first_seen → last_seen; still-live units count through today). */
 function fmtAge(age) {
   return age == null ? '—' : `${age}d`;
-}
-
-/** Units plotted in a chart (sum of the per-bar unit counts). */
-function chartUnitTotal(chartData) {
-  return (chartData?.datasets || []).reduce(
-    (sum, ds) => sum + (ds.units || []).reduce((a, b) => a + (Number(b) || 0), 0),
-    0
-  );
 }
 
 function channelSortValue(row, key) {
@@ -76,10 +86,12 @@ export default function InventoryView() {
   const [catOptions, setCatOptions] = useState([]);
   const [channelOptions, setChannelOptions] = useState([]);
   const [channelColumns, setChannelColumns] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [loadPercent, setLoadPercent] = useState(0);
   const [loadLabel, setLoadLabel] = useState('Loading...');
   const [error, setError] = useState(null);
+  const [makeLimit, setMakeLimit] = useState('all');
+  const [catLimit, setCatLimit] = useState('all');
   const cancelRef = useRef(false);
   const loadGenRef = useRef(0);
   const searchTimer = useRef(null);
@@ -135,11 +147,15 @@ export default function InventoryView() {
         },
         onCoreReady: (core) => {
           if (isStale()) return;
+          // Unlock UI as soon as inventory + age land — channels fill in behind.
           setRows(core.rows || []);
           setMakeOptions(core.makes || []);
           setCatOptions(core.categories || []);
           setChannelColumns([]);
           setChannelOptions([]);
+          setLoadPercent(70);
+          setLoadLabel('Loading channels…');
+          setLoading(false);
         },
         onUpdate: (next) => {
           if (isStale()) return;
@@ -149,6 +165,10 @@ export default function InventoryView() {
           if (Array.isArray(next.channelColumns)) {
             setChannelOptions(next.channels || []);
             setChannelColumns(next.channelColumns);
+            if (next.channelColumns.length > 0) {
+              setLoadPercent(100);
+              setLoadLabel('Ready');
+            }
           }
         },
       });
@@ -287,10 +307,12 @@ export default function InventoryView() {
       bucket.total += views;
     }
 
-    const totals = [...byMake.values()]
-      .filter((r) => r.total > 0)
-      .sort((a, b) => b.total - a.total)
-      .slice(0, 12);
+    const totals = applyChartLimit(
+      [...byMake.values()]
+        .filter((r) => r.total > 0)
+        .sort((a, b) => b.total - a.total),
+      makeLimit
+    );
 
     return {
       labels: totals.map((r) => r.name),
@@ -311,7 +333,7 @@ export default function InventoryView() {
         },
       ],
     };
-  }, [sorted]);
+  }, [sorted, makeLimit]);
 
   const makeOptionsChart = useMemo(
     () => ({
@@ -335,7 +357,13 @@ export default function InventoryView() {
           stacked: true,
           grid: { display: false },
           border: { display: false },
-          ticks: { font: { size: 10 }, color: '#64748b', maxRotation: 45 },
+          ticks: {
+            font: { size: 10 },
+            color: '#64748b',
+            maxRotation: 55,
+            minRotation: 0,
+            autoSkip: false,
+          },
         },
         y: {
           stacked: true,
@@ -358,18 +386,20 @@ export default function InventoryView() {
   }, [sorted, catOptions]);
 
   const catData = useMemo(() => {
-    const totals = catNames
-      .map((c) => {
-        const inType = sorted.filter((r) => r.category === c);
-        return {
-          name: c,
-          value: inType.reduce((s, r) => s + r.vdp1, 0),
-          units: inType.length,
-        };
-      })
-      .filter((r) => r.value > 0)
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 10);
+    const totals = applyChartLimit(
+      catNames
+        .map((c) => {
+          const inType = sorted.filter((r) => r.category === c);
+          return {
+            name: c,
+            value: inType.reduce((s, r) => s + r.vdp1, 0),
+            units: inType.length,
+          };
+        })
+        .filter((r) => r.value > 0)
+        .sort((a, b) => b.value - a.value),
+      catLimit
+    );
 
     const max = Math.max(...totals.map((r) => r.value), 1);
     return {
@@ -394,7 +424,7 @@ export default function InventoryView() {
         },
       ],
     };
-  }, [sorted, catNames]);
+  }, [sorted, catNames, catLimit]);
 
   const catOptionsChart = useMemo(
     () => ({
@@ -441,9 +471,6 @@ export default function InventoryView() {
     []
   );
 
-  const makeUnits = useMemo(() => chartUnitTotal(makeData), [makeData]);
-  const catUnits = useMemo(() => chartUnitTotal(catData), [catData]);
-
   const onSort = (k, dir) => {
     setSort((prev) => {
       if (dir === 1 || dir === -1) return { k, dir };
@@ -455,7 +482,15 @@ export default function InventoryView() {
   };
 
   const isBusy = dealersLoading || loading;
-  const overlayPercent = dealersLoading ? null : loadPercent;
+  const softPercent = useSoftLoadPercent(isBusy);
+  const overlayPercent = (() => {
+    if (!isBusy) return null;
+    if (dealersLoading) return softPercent ?? 5;
+    const staged = Number(loadPercent) || 0;
+    const soft = Number(softPercent) || 0;
+    // Keep the percent climbing smoothly between stage jumps (same feel as other tabs).
+    return Math.min(99, Math.max(staged, soft, 5));
+  })();
 
   if (!dealersLoading && (!client || isAllDealer || !ga4Id)) {
     return (
@@ -474,7 +509,6 @@ export default function InventoryView() {
     <div className={`vdp-view${isBusy ? ' vdp-view--card-loading' : ''}`}>
       <VdpLoadingCard
         active={isBusy}
-        freeze
         label={dealersLoading ? 'Loading dealers…' : loadLabel}
         percent={overlayPercent}
       />
@@ -569,9 +603,20 @@ export default function InventoryView() {
         <Card
           className="vdp-card--chart"
           title="VDP Views by Make"
-          sub="New vs Used · top makes by VDP (current period)"
+          sub="New vs Used · by VDP (current period)"
           actions={
-            <span className="vdp-chart-units">{fmt(makeUnits)} units</span>
+            <select
+              className="vdp-top-vehicles-select"
+              value={makeLimit}
+              onChange={(e) => setMakeLimit(e.target.value)}
+              aria-label="Make chart limit"
+            >
+              {CHART_LIMIT_OPTS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
           }
         >
           {!(makeData.labels || []).length ? (
@@ -580,7 +625,7 @@ export default function InventoryView() {
             </div>
           ) : (
             <VdpChart
-              key={`inv-make-${curFrom}-${curTo}-${makes.join(',')}-${conds.join(',')}-${(makeData.labels || []).join('|')}`}
+              key={`inv-make-${curFrom}-${curTo}-${makeLimit}-${makes.join(',')}-${conds.join(',')}-${(makeData.labels || []).join('|')}`}
               type="bar"
               data={makeData}
               options={makeOptionsChart}
@@ -592,8 +637,21 @@ export default function InventoryView() {
         <Card
           className="vdp-card--chart"
           title="VDP Views by Types"
-          sub="Current comparison period · top types"
-          actions={<span className="vdp-chart-units">{fmt(catUnits)} units</span>}
+          sub="Current comparison period"
+          actions={
+            <select
+              className="vdp-top-vehicles-select"
+              value={catLimit}
+              onChange={(e) => setCatLimit(e.target.value)}
+              aria-label="Type chart limit"
+            >
+              {CHART_LIMIT_OPTS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          }
         >
           {!(catData.labels || []).length ? (
             <div style={{ color: 'var(--vdp-muted)', fontSize: 13, padding: 12 }}>
@@ -601,7 +659,7 @@ export default function InventoryView() {
             </div>
           ) : (
             <VdpChart
-              key={`inv-cat-${curFrom}-${curTo}-${cats.join(',')}-${(catData.labels || []).join('|')}`}
+              key={`inv-cat-${curFrom}-${curTo}-${catLimit}-${cats.join(',')}-${(catData.labels || []).join('|')}`}
               type="bar"
               data={catData}
               options={catOptionsChart}

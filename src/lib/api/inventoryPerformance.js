@@ -119,6 +119,7 @@ async function fetchPeriod({
   channelsOnly = false,
   onCancelCheck,
   signal,
+  timeoutMs = 0,
 }) {
   const qs = new URLSearchParams({
     clientId: String(clientId).trim(),
@@ -137,21 +138,37 @@ async function fetchPeriod({
   if (lite) qs.set('lite', '1');
   if (channelsOnly) qs.set('channelsOnly', '1');
 
-  const res = await fetch(`/api/dashboard/inventory-performance?${qs}`, {
-    credentials: 'same-origin',
-    signal,
-  });
-  const json = await res.json().catch(() => ({}));
-  if (onCancelCheck?.()) return { rows: [], channels: [] };
-  if (!res.ok) {
-    throw new Error(json.error || `Inventory performance failed (${res.status})`);
+  const ctrl = new AbortController();
+  const onAbort = () => ctrl.abort();
+  if (signal) {
+    if (signal.aborted) ctrl.abort();
+    else signal.addEventListener('abort', onAbort, { once: true });
   }
-  return {
-    rows: (json.rows || []).map(normalizeRow),
-    channels: Array.isArray(json.channels) ? json.channels : [],
-    channelColumns: Array.isArray(json.channelColumns) ? json.channelColumns : [],
-    channelMatrix: Array.isArray(json.channelMatrix) ? json.channelMatrix : [],
-  };
+  const timer =
+    timeoutMs > 0
+      ? setTimeout(() => ctrl.abort(), timeoutMs)
+      : null;
+
+  try {
+    const res = await fetch(`/api/dashboard/inventory-performance?${qs}`, {
+      credentials: 'same-origin',
+      signal: ctrl.signal,
+    });
+    const json = await res.json().catch(() => ({}));
+    if (onCancelCheck?.()) return { rows: [], channels: [] };
+    if (!res.ok) {
+      throw new Error(json.error || `Inventory performance failed (${res.status})`);
+    }
+    return {
+      rows: (json.rows || []).map(normalizeRow),
+      channels: Array.isArray(json.channels) ? json.channels : [],
+      channelColumns: Array.isArray(json.channelColumns) ? json.channelColumns : [],
+      channelMatrix: Array.isArray(json.channelMatrix) ? json.channelMatrix : [],
+    };
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (signal) signal.removeEventListener('abort', onAbort);
+  }
 }
 
 function mapRowsWithPrior(current, prior) {
@@ -245,11 +262,13 @@ export async function fetchInventoryPerformance({
 
   reportProgress('inventory');
 
+  // Lite core first (views only) so large dealers unlock before age/channels.
   const currentRes = await fetchPeriod({
     clientId,
     from,
     to,
     ...filterOpts,
+    lite: true,
     onCancelCheck,
   });
   if (onCancelCheck?.()) {
@@ -272,6 +291,39 @@ export async function fetchInventoryPerformance({
   onUpdate?.(corePayload);
 
   const bg = [];
+
+  // Age fills in behind the first paint (same endpoint without lite/channelsOnly).
+  bg.push(
+    fetchPeriod({
+      clientId,
+      from,
+      to,
+      ...filterOpts,
+      onCancelCheck,
+      timeoutMs: 25000,
+    })
+      .then((agedRes) => {
+        if (onCancelCheck?.()) return;
+        const ageByKey = new Map();
+        for (const r of agedRes.rows || []) {
+          if (r.ageDays == null) continue;
+          ageByKey.set(r._key, r.ageDays);
+        }
+        if (!ageByKey.size) return;
+        rows = rows.map((r) => {
+          const age = ageByKey.get(r._key);
+          return age == null ? r : { ...r, age };
+        });
+        onUpdate?.({
+          rows,
+          makes,
+          categories,
+          channels: corePayload.channels,
+          channelColumns: corePayload.channelColumns,
+        });
+      })
+      .catch(() => {})
+  );
 
   if (hasPrior) {
     bg.push(
@@ -337,6 +389,8 @@ export async function fetchInventoryPerformance({
       ...filterOpts,
       channelsOnly: true,
       onCancelCheck,
+      // Day-chunked channel path usually finishes in a few seconds; abort if hung.
+      timeoutMs: 45000,
     })
       .then((chRes) => {
         if (onCancelCheck?.()) return;

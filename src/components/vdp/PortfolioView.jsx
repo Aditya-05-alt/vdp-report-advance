@@ -1519,7 +1519,28 @@ export default function PortfolioView() {
                         className={`${['pv1', 'pv0', 'pvmom', 'vdp1', 'vdp0', 'vdpmom', 'rate'].includes(k) ? 'right' : ''} ${sort.k === k ? 'sorted' : ''}`}
                         onClick={() => onSort(k)}
                       >
-                        {label}
+                        <span className="vdp-th-label">
+                          {label}
+                          {k === 'rate' ? (
+                            <span
+                              className="vdp-col-tip"
+                              tabIndex={0}
+                              role="button"
+                              aria-label="VDP Rate formula"
+                              onClick={(e) => e.stopPropagation()}
+                              onKeyDown={(e) => e.stopPropagation()}
+                            >
+                              <span className="vdp-col-tip-icon" aria-hidden>
+                                !
+                              </span>
+                              <span className="vdp-col-tip-bubble" role="tooltip">
+                                <strong>VDP Rate</strong>
+                                <br />
+                                (VDP Views ÷ Page Views) × 100
+                              </span>
+                            </span>
+                          ) : null}
+                        </span>
                       </th>
                     ))}
                   </tr>

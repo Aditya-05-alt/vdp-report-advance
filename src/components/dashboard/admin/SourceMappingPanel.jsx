@@ -164,9 +164,35 @@ export default function SourceMappingPanel() {
   const [loading, setLoading] = useState(true);
   const [rawLoading, setRawLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [savedFlash, setSavedFlash] = useState(false);
+  const savedFlashTimer = useRef(null);
   const [error, setError] = useState(null);
   const [warning, setWarning] = useState(null);
   const [status, setStatus] = useState(null);
+
+  const clearSavedFlash = () => {
+    if (savedFlashTimer.current) {
+      clearTimeout(savedFlashTimer.current);
+      savedFlashTimer.current = null;
+    }
+    setSavedFlash(false);
+  };
+
+  const showSavedFlash = () => {
+    clearSavedFlash();
+    setSavedFlash(true);
+    savedFlashTimer.current = setTimeout(() => {
+      setSavedFlash(false);
+      savedFlashTimer.current = null;
+    }, 15000);
+  };
+
+  const markDirty = () => {
+    setDirty(true);
+    setStatus(null);
+    clearSavedFlash();
+  };
 
   const setMapMode = (next) => {
     setMapModeState(next);
@@ -238,6 +264,7 @@ export default function SourceMappingPanel() {
       setChannels(json.channels?.length ? json.channels : defaultChannels());
       setMapping(json.mapping || {});
       setWarning(json.warning || null);
+      setDirty(false);
     } catch (err) {
       setError(err.message || 'Failed to load mapping');
     } finally {
@@ -278,6 +305,23 @@ export default function SourceMappingPanel() {
   useEffect(() => {
     loadRaw();
   }, [loadRaw]);
+
+  useEffect(() => {
+    if (!dirty) return undefined;
+    const onBeforeUnload = (e) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [dirty]);
+
+  useEffect(
+    () => () => {
+      if (savedFlashTimer.current) clearTimeout(savedFlashTimer.current);
+    },
+    []
+  );
 
   const mappingMap = useMemo(() => toMappingMap(mapping), [mapping]);
 
@@ -421,23 +465,34 @@ export default function SourceMappingPanel() {
           [json.error, json.hint].filter(Boolean).join(' ') || 'Save failed'
         );
       }
+      if (json.missingTable) {
+        throw new Error(
+          json.warning ||
+            'Mapping tables are missing — deploy supabase/migrations/source_mapping.sql first.'
+        );
+      }
       setChannels(json.channels?.length ? json.channels : nextChannels);
       setMapping(json.mapping || nextMapping);
       setWarning(json.warning || null);
       invalidateSourceMappingCache();
+      setDirty(false);
       setStatus('Saved — Traffic and All Dealers columns will use this mapping.');
+      showSavedFlash();
     } catch (err) {
       setError(err.message || 'Save failed');
+      clearSavedFlash();
     } finally {
       setSaving(false);
     }
   };
 
+  const saveMapping = () => persist(channels, mapping);
+
   const assignOne = (rawSource, rawMedium, channelId) => {
     const key = rawPairKey(rawSource, rawMedium);
     const next = { ...mapping, [key]: channelId };
     setMapping(next);
-    persist(channels, next);
+    markDirty();
   };
 
   const addChannel = () => {
@@ -455,7 +510,7 @@ export default function SourceMappingPanel() {
     if (idx < 0) next.push(row);
     else next.splice(idx, 0, row);
     setChannels(next);
-    persist(next, mapping);
+    markDirty();
   };
 
   const renameChannel = (id, name) => {
@@ -463,7 +518,7 @@ export default function SourceMappingPanel() {
       c.id === id ? { ...c, name: name || c.name } : c
     );
     setChannels(next);
-    persist(next, mapping);
+    markDirty();
   };
 
   const deleteChannel = (id) => {
@@ -475,7 +530,7 @@ export default function SourceMappingPanel() {
     const nextChannels = channels.filter((c) => c.id !== id);
     setChannels(nextChannels);
     setMapping(nextMapping);
-    persist(nextChannels, nextMapping);
+    markDirty();
   };
 
   const mergeChannel = (fromId, intoId) => {
@@ -490,7 +545,7 @@ export default function SourceMappingPanel() {
         : channels.filter((c) => c.id !== fromId);
     setChannels(nextChannels);
     setMapping(nextMapping);
-    persist(nextChannels, nextMapping);
+    markDirty();
   };
 
   const resetMapping = () => {
@@ -505,6 +560,13 @@ export default function SourceMappingPanel() {
     setMapping(map);
     setSelected(new Set());
     persist(ch, map, { reset: true });
+  };
+
+  const discardChanges = () => {
+    setDirty(false);
+    setStatus(null);
+    setError(null);
+    loadConfig();
   };
 
   const toggleSelect = (id) => {
@@ -533,7 +595,7 @@ export default function SourceMappingPanel() {
     }
     setMapping(next);
     setSelected(new Set());
-    persist(channels, next);
+    markDirty();
   };
 
   if (loading) {
@@ -686,7 +748,33 @@ export default function SourceMappingPanel() {
           MTD {MTD.curLabel}
           {rawLoading ? ' · Loading raw…' : ''}
           {saving ? ' · Saving…' : ''}
+          {dirty && !saving ? ' · Unsaved changes' : ''}
         </span>
+        <div className="src-map-save-actions">
+          {dirty ? (
+            <button
+              type="button"
+              className="src-map-btn"
+              onClick={discardChanges}
+              disabled={saving}
+            >
+              Discard
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="src-map-btn src-map-btn--primary"
+            onClick={saveMapping}
+            disabled={saving || !dirty}
+          >
+            {saving ? 'Saving…' : dirty ? 'Save Mapping' : 'Saved'}
+          </button>
+          {savedFlash ? (
+            <span className="src-map-saved-tick" aria-live="polite" title="Saved">
+              ✓
+            </span>
+          ) : null}
+        </div>
       </div>
 
       <div className="src-map-grid2">
@@ -766,6 +854,19 @@ export default function SourceMappingPanel() {
             <button type="button" className="src-map-btn" onClick={resetMapping}>
               Reset to Default Mapping
             </button>
+            <button
+              type="button"
+              className="src-map-btn src-map-btn--primary"
+              onClick={saveMapping}
+              disabled={saving || !dirty}
+            >
+              {saving ? 'Saving…' : dirty ? 'Save Mapping' : 'Saved'}
+            </button>
+            {savedFlash ? (
+              <span className="src-map-saved-tick" aria-live="polite" title="Saved">
+                ✓
+              </span>
+            ) : null}
           </div>
         </div>
 

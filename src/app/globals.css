@@ -7435,6 +7435,37 @@ body {
   border-color: #1d4ed8;
   color: #fff;
 }
+.src-map-save-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.src-map-saved-tick {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: #dcfce7;
+  color: #16a34a;
+  border: 1px solid #86efac;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  animation: src-map-tick-in 0.2s ease-out;
+}
+@keyframes src-map-tick-in {
+  from {
+    opacity: 0;
+    transform: scale(0.7);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
 .src-map-btn:disabled {
   opacity: 0.55;
   cursor: default;

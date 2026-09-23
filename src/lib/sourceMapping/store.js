@@ -106,13 +106,7 @@ export async function saveSourceMapping(supabase, { channels, rules }) {
     });
   }
 
-  // Replace strategy: delete rules, upsert channels, delete removed channels, insert rules
-  const { error: delRulesErr } = await supabase
-    .from('smart_source_mapping_rules')
-    .delete()
-    .not('id', 'is', null);
-  if (delRulesErr) throw new Error(delRulesErr.message);
-
+  // Upsert channels first (never wipe rules before a successful write).
   const { error: upsertChErr } = await supabase
     .from('smart_source_mapping_channels')
     .upsert(chList, { onConflict: 'id' });
@@ -134,10 +128,30 @@ export async function saveSourceMapping(supabase, { channels, rules }) {
   }
 
   if (ruleList.length) {
-    const { error: insErr } = await supabase
+    const { error: upsErr } = await supabase
       .from('smart_source_mapping_rules')
-      .insert(ruleList);
-    if (insErr) throw new Error(insErr.message);
+      .upsert(ruleList, { onConflict: 'raw_source,raw_medium' });
+    if (upsErr) throw new Error(upsErr.message);
+  }
+
+  // Drop only rules that are no longer in the saved mapping.
+  const { data: existingRules, error: listRulesErr } = await supabase
+    .from('smart_source_mapping_rules')
+    .select('id, raw_source, raw_medium');
+  if (listRulesErr) throw new Error(listRulesErr.message);
+
+  const keepKeys = new Set(
+    ruleList.map((r) => rawPairKey(r.raw_source, r.raw_medium))
+  );
+  const removeIds = (existingRules || [])
+    .filter((r) => !keepKeys.has(rawPairKey(r.raw_source, r.raw_medium)))
+    .map((r) => r.id);
+  if (removeIds.length) {
+    const { error: delRuleErr } = await supabase
+      .from('smart_source_mapping_rules')
+      .delete()
+      .in('id', removeIds);
+    if (delRuleErr) throw new Error(delRuleErr.message);
   }
 
   return loadSourceMapping(supabase);

@@ -158,6 +158,7 @@ export default function SourceMappingPanel() {
   const [filterSource, setFilterSource] = useState('');
   const [filterMedium, setFilterMedium] = useState('');
   const [filterChannel, setFilterChannel] = useState('');
+  const [filterMappedChannel, setFilterMappedChannel] = useState('');
   const [selected, setSelected] = useState(() => new Set());
   const [bulkTarget, setBulkTarget] = useState('');
   const [loading, setLoading] = useState(true);
@@ -301,6 +302,9 @@ export default function SourceMappingPanel() {
     if (filterChannel) {
       rows = rows.filter((r) => formatRawChannel(r.rawChannel) === filterChannel);
     }
+    if (filterMappedChannel) {
+      rows = rows.filter((r) => r.channelId === filterMappedChannel);
+    }
     if (q) {
       rows = rows.filter(
         (r) =>
@@ -311,7 +315,15 @@ export default function SourceMappingPanel() {
       );
     }
     return rows;
-  }, [rawRows, mappingMap, search, filterSource, filterMedium, filterChannel]);
+  }, [
+    rawRows,
+    mappingMap,
+    search,
+    filterSource,
+    filterMedium,
+    filterChannel,
+    filterMappedChannel,
+  ]);
 
   const sourceFilterOpts = useMemo(() => {
     const set = new Set(rawRows.map((r) => String(r.rawSource || '')));
@@ -327,6 +339,17 @@ export default function SourceMappingPanel() {
     const set = new Set(rawRows.map((r) => formatRawChannel(r.rawChannel)));
     return [...set].filter(Boolean).sort((a, b) => a.localeCompare(b));
   }, [rawRows]);
+
+  const mappedChannelFilterOpts = useMemo(() => {
+    return (channels || [])
+      .map((c) => ({ id: c.id, name: c.name || c.id }))
+      .filter((c) => c.id)
+      .sort((a, b) => {
+        if (a.id === UNMAPPED_ID) return 1;
+        if (b.id === UNMAPPED_ID) return -1;
+        return String(a.name).localeCompare(String(b.name));
+      });
+  }, [channels]);
 
   const channelCounts = useMemo(() => {
     const counts = Object.fromEntries(channels.map((c) => [c.id, 0]));
@@ -802,7 +825,11 @@ export default function SourceMappingPanel() {
           Raw Sources{' '}
           <span className="src-map-count">
             ({filteredRaw.length}
-            {search || filterSource || filterMedium || filterChannel
+            {search ||
+            filterSource ||
+            filterMedium ||
+            filterChannel ||
+            filterMappedChannel
               ? ` of ${rawRows.length}`
               : ''}
             )
@@ -860,7 +887,24 @@ export default function SourceMappingPanel() {
               </option>
             ))}
           </select>
-          {(filterSource || filterMedium || filterChannel || search) && (
+          <select
+            className="src-map-select src-map-select--filter"
+            value={filterMappedChannel}
+            onChange={(e) => setFilterMappedChannel(e.target.value)}
+            aria-label="Filter by mapped channel"
+          >
+            <option value="">Mapped Channel</option>
+            {mappedChannelFilterOpts.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+          {(filterSource ||
+            filterMedium ||
+            filterChannel ||
+            filterMappedChannel ||
+            search) && (
             <button
               type="button"
               className="src-map-btn"
@@ -869,6 +913,7 @@ export default function SourceMappingPanel() {
                 setFilterSource('');
                 setFilterMedium('');
                 setFilterChannel('');
+                setFilterMappedChannel('');
               }}
             >
               Clear filters

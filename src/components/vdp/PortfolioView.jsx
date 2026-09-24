@@ -3,12 +3,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState, Fragment } from 'react';
 import { useRouter } from 'next/navigation';
 import { useClient } from '@/components/dashboard/ClientContext';
+import Delta from '@/components/dashboard/Delta';
 import {
   fetchAllDealersChannelMatrix,
   sliceMapForRow,
 } from '@/lib/api/allDealerChannelMatrix';
+import { fetchAllDealersAdsCost } from '@/lib/api/allDealerAdsCost';
 import { fetchAllDealersConditionTotals } from '@/lib/api/allDealerConditionTotals';
 import { colorForChannel } from '@/lib/ga4/channelDisplay';
+import { pctChange } from '@/lib/overview/comparePeriod';
 import { fmt, pct, momClass, safeDiv } from '@/lib/vdp/aggregates';
 import VdpChart from './VdpChart';
 import { VdpLoadingCard } from './VdpLoadingBanner';
@@ -20,6 +23,246 @@ const METRIC_OPTS = [
   { value: 'vdp', label: 'VDP Views' },
   { value: 'page', label: 'Page Views' },
 ];
+
+/**
+ * Dealer Breakdown channel columns.
+ * Order: everything before Paid Search, then Paid Search, then Cross-network.
+ * Aliases match GA4 / Source Mapping display names.
+ */
+const DEALER_BREAKDOWN_CHANNEL_DEFS = [
+  {
+    key: 'organic-search',
+    label: 'Organic Search',
+    aliases: ['Organic Search', 'Organic', 'organic_search'],
+  },
+  { key: 'direct', label: 'Direct', aliases: ['Direct', 'direct'] },
+  {
+    key: 'organic-social',
+    label: 'Organic Social',
+    aliases: ['Organic Social', 'organic_social'],
+  },
+  {
+    key: 'paid-social',
+    label: 'Paid Social',
+    aliases: ['Paid Social', 'paid_social'],
+  },
+  {
+    key: 'organic-video',
+    label: 'Organic Video',
+    aliases: ['Organic Video', 'organic_video'],
+  },
+  {
+    key: 'paid-video',
+    label: 'Paid Video',
+    aliases: ['Paid Video', 'paid_video'],
+  },
+  { key: 'display', label: 'Display', aliases: ['Display', 'display'] },
+  { key: 'email', label: 'Email', aliases: ['Email', 'email'] },
+  { key: 'referral', label: 'Referral', aliases: ['Referral', 'referral'] },
+  {
+    key: 'affiliates',
+    label: 'Affiliates',
+    aliases: ['Affiliates', 'affiliates'],
+  },
+  {
+    key: 'organic-shopping',
+    label: 'Organic Shopping',
+    aliases: ['Organic Shopping', 'organic_shopping'],
+  },
+  {
+    key: 'paid-shopping',
+    label: 'Paid Shopping',
+    aliases: ['Paid Shopping', 'paid_shopping'],
+  },
+  {
+    key: 'paid-other',
+    label: 'Paid Other',
+    aliases: ['Paid Other', 'paid_other'],
+  },
+  { key: 'sms', label: 'SMS', aliases: ['SMS', 'sms'] },
+  { key: 'audio', label: 'Audio', aliases: ['Audio', 'audio'] },
+  {
+    key: 'unassigned',
+    label: 'Unassigned',
+    aliases: ['Unassigned', 'unassigned'],
+  },
+  {
+    key: 'ai-assistant',
+    label: 'AI Assistant',
+    aliases: ['AI Assistant', 'Ai Assistant', 'ai_assistant'],
+  },
+  {
+    key: 'mobile-push',
+    label: 'Mobile Push',
+    aliases: [
+      'Mobile Push',
+      'Mobile Push Notifications',
+      'mobile_push_notifications',
+      'mobile push notifications',
+    ],
+  },
+  {
+    key: 'others',
+    label: 'Others',
+    aliases: ['Others', 'Other', 'others'],
+  },
+  {
+    key: 'not-set',
+    label: '(not set)',
+    aliases: ['(not set)', 'not set', '(not_set)'],
+  },
+  // Kept at the end (just before Cost)
+  {
+    key: 'paid-search',
+    label: 'Paid Search',
+    aliases: ['Paid Search', 'paid_search'],
+  },
+  {
+    key: 'cross-network',
+    label: 'Cross-network',
+    aliases: [
+      'Cross-network',
+      'Cross Network',
+      'Cross-Network',
+      'cross-network',
+    ],
+  },
+];
+
+const DEALER_BREAKDOWN_DEALER_W = 200;
+const DEALER_BREAKDOWN_TOTAL_W = 130;
+
+function resolveChannelColumn(columns, aliases) {
+  const list = columns || [];
+  const lower = new Map(list.map((c) => [String(c).toLowerCase(), c]));
+  for (const alias of aliases) {
+    const hit = lower.get(String(alias).toLowerCase());
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** Prefer defs order; append any matrix columns not covered (before Paid Search). */
+function buildDealerBreakdownChannels(columns) {
+  const cols = columns || [];
+  const resolved = DEALER_BREAKDOWN_CHANNEL_DEFS.map((def) => ({
+    ...def,
+    name: resolveChannelColumn(cols, def.aliases),
+  }));
+  const used = new Set(resolved.map((d) => d.name).filter(Boolean));
+  const extras = cols
+    .filter((c) => c && !used.has(c))
+    .map((c) => ({
+      key: `extra-${String(c).toLowerCase().replace(/\s+/g, '-')}`,
+      label: c,
+      aliases: [c],
+      name: c,
+    }));
+
+  const paidIdx = resolved.findIndex((d) => d.key === 'paid-search');
+  if (paidIdx < 0) return [...resolved, ...extras].filter((d) => d.name);
+  return [
+    ...resolved.slice(0, paidIdx),
+    ...extras,
+    ...resolved.slice(paidIdx),
+  ].filter((d) => d.name);
+}
+
+function fmtCost(n, { decimals = 0 } = {}) {
+  const v = Number(n) || 0;
+  return `$${v.toLocaleString('en-US', {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  })}`;
+}
+
+/** Google Ads Cost ÷ VDP views (0 when no VDP). */
+function costPerVdp(cost, vdp) {
+  const c = Number(cost) || 0;
+  const v = Number(vdp) || 0;
+  if (v <= 0 || c <= 0) return 0;
+  return c / v;
+}
+
+function shortMonthLabel(periodLabel) {
+  if (!periodLabel) return '';
+  const raw = String(periodLabel).trim();
+  const monthYear = raw.match(/^([A-Za-z]{3,9})\s+(\d{4})$/);
+  if (monthYear) {
+    return `${monthYear[1].slice(0, 3)} ${monthYear[2]}`;
+  }
+  const rangeStart = raw.match(/^([A-Za-z]{3,9})\s+\d{1,2},?\s+(\d{4})/);
+  if (rangeStart) {
+    return `${rangeStart[1].slice(0, 3)} ${rangeStart[2]}`;
+  }
+  return raw.length > 8 ? `${raw.slice(0, 8)}…` : raw;
+}
+
+function DealerCompareStack({
+  current,
+  compare,
+  showCompareStack,
+  currentLabel,
+  compareLabel,
+  deltaLabel = 'MoM',
+  format = 'number',
+}) {
+  const cur = Number(current) || 0;
+  const cmp = Number(compare) || 0;
+  const formatValue = (v) => {
+    if (format === 'currency') return fmtCost(v);
+    if (format === 'costPerVdp') return fmtCost(v, { decimals: 2 });
+    return v.toLocaleString();
+  };
+
+  if (!showCompareStack) {
+    if (cur <= 0) return <span className="vdp-cell-empty">—</span>;
+    return <span className="mono">{formatValue(cur)}</span>;
+  }
+
+  if (cur <= 0 && cmp <= 0) {
+    return <span className="vdp-cell-empty">—</span>;
+  }
+
+  const curTag = shortMonthLabel(currentLabel) || 'Current';
+  const prevTag = shortMonthLabel(compareLabel) || 'Previous';
+
+  return (
+    <div className="vdp-compare-stack">
+      <div className="vdp-compare-line">
+        <span className="vdp-compare-lbl" title={currentLabel}>
+          {curTag}
+        </span>
+        <span className="vdp-compare-num vdp-compare-num--cur">
+          {cur > 0 ? formatValue(cur) : '—'}
+        </span>
+      </div>
+      <div className="vdp-compare-line">
+        <span className="vdp-compare-lbl" title={compareLabel}>
+          {prevTag}
+        </span>
+        <span className="vdp-compare-num vdp-compare-num--prev">
+          {formatValue(cmp)}
+        </span>
+      </div>
+      <div className="vdp-compare-line vdp-compare-line--pct">
+        <span className="vdp-compare-lbl">{deltaLabel}</span>
+        <span className="vdp-compare-pct">
+          <Delta value={pctChange(cur, cmp)} size={10} />
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function costForDealer(costMap, dealer) {
+  if (!costMap?.size || !dealer) return 0;
+  const id = String(dealer.ga4CustomerId || dealer.id || '').trim();
+  if (id && costMap.has(id)) return Number(costMap.get(id)) || 0;
+  const key = dealerKey(dealer);
+  if (key && costMap.has(key)) return Number(costMap.get(key)) || 0;
+  return 0;
+}
 
 function dealerIncludedOnTab(dealer, metric) {
   if (metric === 'vdp') return dealer?.showAllDealersVdp !== false;
@@ -350,12 +593,16 @@ export default function PortfolioView() {
   /** Lightweight New/Used/Unknown rows from condition-totals RPC. */
   const [conditionTotalsRows, setConditionTotalsRows] = useState([]);
   const [conditionSplitReady, setConditionSplitReady] = useState(false);
+  /** Google Ads spend by dealer client_id (current + prior period). */
+  const [adsCostCur, setAdsCostCur] = useState(() => new Map());
+  const [adsCostPri, setAdsCostPri] = useState(() => new Map());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [progress, setProgress] = useState(null);
   const cancelRef = useRef(false);
   const loadGenRef = useRef(0);
   const conditionGenRef = useRef(0);
+  const adsCostGenRef = useRef(0);
 
   const {
     from: curFrom,
@@ -507,6 +754,44 @@ export default function PortfolioView() {
     }
   }, [portfolioDealers, curFrom, curTo]);
 
+  const loadAdsCost = useCallback(async () => {
+    if (!curFrom || !curTo) {
+      setAdsCostCur(new Map());
+      setAdsCostPri(new Map());
+      return;
+    }
+
+    const gen = adsCostGenRef.current + 1;
+    adsCostGenRef.current = gen;
+    const isStale = () => adsCostGenRef.current !== gen;
+    const withCompare = compareActive && Boolean(priFrom && priTo);
+
+    try {
+      const [curMap, priMap] = await Promise.all([
+        fetchAllDealersAdsCost({
+          from: curFrom,
+          to: curTo,
+          onCancelCheck: () => isStale(),
+        }),
+        withCompare
+          ? fetchAllDealersAdsCost({
+              from: priFrom,
+              to: priTo,
+              onCancelCheck: () => isStale(),
+            })
+          : Promise.resolve(new Map()),
+      ]);
+      if (isStale()) return;
+      setAdsCostCur(curMap);
+      setAdsCostPri(priMap);
+    } catch {
+      if (!isStale()) {
+        setAdsCostCur(new Map());
+        setAdsCostPri(new Map());
+      }
+    }
+  }, [curFrom, curTo, priFrom, priTo, compareActive]);
+
   useEffect(() => {
     if (dealersLoading) return undefined;
     loadMatrix();
@@ -520,6 +805,12 @@ export default function PortfolioView() {
     loadConditionTotals();
     return undefined;
   }, [dealersLoading, loadConditionTotals]);
+
+  useEffect(() => {
+    if (dealersLoading) return undefined;
+    loadAdsCost();
+    return undefined;
+  }, [dealersLoading, loadAdsCost]);
 
   const activeMatrix = metric === 'vdp' ? vdpCur : pageCur;
   const priorMatrix = metric === 'vdp' ? vdpPri : pagePri;
@@ -701,6 +992,117 @@ export default function PortfolioView() {
     channelId,
     selectedDealerIdSet,
   ]);
+
+  /** Dealer totals — all matrix channels; Paid Search / Cross-network last. */
+  const dealerBreakdownChannels = useMemo(
+    () => buildDealerBreakdownChannels(channelGrid.columns),
+    [channelGrid.columns]
+  );
+
+  const dealerBreakdownSummaryRows = useMemo(() => {
+    const vdpByDealer = indexRowsByDealer(vdpCur.rows);
+    const vdpPriorByDealer = indexRowsByDealer(vdpPri.rows);
+    return (filteredDealerRows || [])
+      .map((row) => {
+        const id = dealerKey(row.dealer);
+        const cur = Number(row.total) || 0;
+        const priorRow = priorByDealer.get(id);
+        const prior = compareActive
+          ? channelId === 'all'
+            ? Math.round(Number(priorRow?.total) || 0)
+            : channelValue(priorRow, channelId)
+          : 0;
+        const fullRow = channelGrid.dealerRows.find(
+          (r) => dealerKey(r.dealer) === id
+        );
+        const channels = {};
+        for (const ch of dealerBreakdownChannels) {
+          const fullIdx = ch.name ? channelGrid.columns.indexOf(ch.name) : -1;
+          const curVal =
+            fullRow && fullIdx >= 0
+              ? Math.round(Number(fullRow.cells?.[fullIdx]) || 0)
+              : 0;
+          channels[ch.key] = {
+            cur: curVal,
+            prior: compareActive && ch.name ? channelValue(priorRow, ch.name) : 0,
+          };
+        }
+        const cost = costForDealer(adsCostCur, row.dealer);
+        const costPrior = compareActive
+          ? costForDealer(adsCostPri, row.dealer)
+          : 0;
+        // Always use Total VDP for Cost/VDP (not page metric / channel filter).
+        const vdpViews = Math.round(Number(vdpByDealer.get(id)?.total) || 0);
+        const vdpViewsPrior = compareActive
+          ? Math.round(Number(vdpPriorByDealer.get(id)?.total) || 0)
+          : 0;
+        return {
+          id,
+          name: row.dealer?.name || 'Unnamed',
+          dealer: row.dealer,
+          error: row.error,
+          cur,
+          prior,
+          channels,
+          cost,
+          costPrior,
+          vdpViews,
+          vdpViewsPrior,
+          costPerVdp: costPerVdp(cost, vdpViews),
+          costPerVdpPrior: costPerVdp(costPrior, vdpViewsPrior),
+        };
+      })
+      .sort((a, b) => b.cur - a.cur);
+  }, [
+    filteredDealerRows,
+    priorByDealer,
+    compareActive,
+    channelId,
+    channelValue,
+    dealerBreakdownChannels,
+    channelGrid.columns,
+    channelGrid.dealerRows,
+    adsCostCur,
+    adsCostPri,
+    vdpCur.rows,
+    vdpPri.rows,
+  ]);
+
+  const dealerBreakdownChannelTotals = useMemo(() => {
+    const totals = {};
+    for (const ch of dealerBreakdownChannels) {
+      let cur = 0;
+      let prior = 0;
+      for (const row of dealerBreakdownSummaryRows) {
+        cur += Number(row.channels?.[ch.key]?.cur) || 0;
+        prior += Number(row.channels?.[ch.key]?.prior) || 0;
+      }
+      totals[ch.key] = { cur, prior };
+    }
+    return totals;
+  }, [dealerBreakdownChannels, dealerBreakdownSummaryRows]);
+
+  const dealerBreakdownCostTotal = useMemo(() => {
+    let cur = 0;
+    let prior = 0;
+    let vdp = 0;
+    let vdpPrior = 0;
+    for (const row of dealerBreakdownSummaryRows) {
+      cur += Number(row.cost) || 0;
+      prior += Number(row.costPrior) || 0;
+      vdp += Number(row.vdpViews) || 0;
+      vdpPrior += Number(row.vdpViewsPrior) || 0;
+    }
+    return {
+      cur,
+      prior,
+      costPerVdp: costPerVdp(cur, vdp),
+      costPerVdpPrior: costPerVdp(prior, vdpPrior),
+    };
+  }, [dealerBreakdownSummaryRows]);
+
+  const totalMetricLabel = metric === 'page' ? 'Total Page Views' : 'Total VDP';
+  const compareDeltaLabel = compareMode === 'pop' ? 'PoP' : 'MoM';
 
   const topChannel = useMemo(() => {
     const list =
@@ -1164,6 +1566,186 @@ export default function PortfolioView() {
               />
             </div>
           </div>
+        )}
+      </Card>
+
+      <Card
+        title={`Dealer Breakdown — ${filterScopeLabel}`}
+        sub={
+          compareActive
+            ? `${totalMetricLabel} · ${curLabel} vs ${priLabel} (${compareModeLabel}) · filtered to ${filterScopeLabel} — click a row to open that dealer`
+            : `${totalMetricLabel} · ${curLabel} · filtered to ${filterScopeLabel} — click a row to open that dealer`
+        }
+        style={{ marginBottom: 16 }}
+      >
+        {!dealerBreakdownSummaryRows.length ? (
+          <div style={{ color: 'var(--vdp-muted)', fontSize: 13, padding: 12 }}>
+            No dealer data for this period.
+          </div>
+        ) : (
+          <>
+            <div
+              className="vdp-table-scroll vdp-table-scroll--10 vdp-dealer-breakdown-scroll"
+              style={{
+                ['--db-dealer-w']: `${DEALER_BREAKDOWN_DEALER_W}px`,
+                ['--db-total-w']: `${DEALER_BREAKDOWN_TOTAL_W}px`,
+              }}
+            >
+              <table
+                className={`vdp-table vdp-table--dealer-breakdown${
+                  compareActive ? ' vdp-table--dealer-compare' : ''
+                }`}
+              >
+                <thead>
+                  <tr>
+                    <th className="vdp-db-sticky vdp-db-sticky--dealer">
+                      Dealer
+                    </th>
+                    <th className="right vdp-db-sticky vdp-db-sticky--total">
+                      {totalMetricLabel}
+                    </th>
+                    {dealerBreakdownChannels.map((ch) => (
+                      <th
+                        key={ch.key}
+                        className="right vdp-db-ch-head"
+                        title={ch.name && ch.name !== ch.label ? ch.name : ch.label}
+                      >
+                        <span className="vdp-db-ch-label">{ch.label}</span>
+                      </th>
+                    ))}
+                    <th className="right vdp-db-ch-head">
+                      <span className="vdp-db-ch-label">Cost</span>
+                    </th>
+                    <th
+                      className="right vdp-db-ch-head"
+                      title="Google Paid Search — Ads Cost ÷ Total VDP Views"
+                    >
+                      <span className="vdp-db-ch-label">Cost/VDP</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dealerBreakdownSummaryRows.map((r) => (
+                    <tr
+                      key={r.id}
+                      className="vdp-row-click"
+                      onClick={() => openDealer(r.dealer)}
+                    >
+                      <td className="vdp-dealer-name vdp-db-sticky vdp-db-sticky--dealer">
+                        {r.name}
+                        {r.error ? (
+                          <span className="vdp-vert-tag" style={{ color: '#dc2626' }}>
+                            {r.error}
+                          </span>
+                        ) : null}
+                      </td>
+                      <td className="right vdp-db-sticky vdp-db-sticky--total">
+                        <DealerCompareStack
+                          current={r.cur}
+                          compare={r.prior}
+                          showCompareStack={compareActive}
+                          currentLabel={curLabel}
+                          compareLabel={priLabel}
+                          deltaLabel={compareDeltaLabel}
+                        />
+                      </td>
+                      {dealerBreakdownChannels.map((ch) => (
+                        <td key={ch.key} className="right">
+                          <DealerCompareStack
+                            current={r.channels?.[ch.key]?.cur}
+                            compare={r.channels?.[ch.key]?.prior}
+                            showCompareStack={compareActive}
+                            currentLabel={curLabel}
+                            compareLabel={priLabel}
+                            deltaLabel={compareDeltaLabel}
+                          />
+                        </td>
+                      ))}
+                      <td className="right">
+                        <DealerCompareStack
+                          current={r.cost}
+                          compare={r.costPrior}
+                          showCompareStack={compareActive}
+                          currentLabel={curLabel}
+                          compareLabel={priLabel}
+                          deltaLabel={compareDeltaLabel}
+                          format="currency"
+                        />
+                      </td>
+                      <td className="right">
+                        <DealerCompareStack
+                          current={r.costPerVdp}
+                          compare={r.costPerVdpPrior}
+                          showCompareStack={compareActive}
+                          currentLabel={curLabel}
+                          compareLabel={priLabel}
+                          deltaLabel={compareDeltaLabel}
+                          format="costPerVdp"
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td className="vdp-db-sticky vdp-db-sticky--dealer">
+                      <strong>Total</strong>
+                    </td>
+                    <td className="right vdp-db-sticky vdp-db-sticky--total">
+                      <DealerCompareStack
+                        current={displayAllTotals.total}
+                        compare={priorAllTotals.total}
+                        showCompareStack={compareActive}
+                        currentLabel={curLabel}
+                        compareLabel={priLabel}
+                        deltaLabel={compareDeltaLabel}
+                      />
+                    </td>
+                    {dealerBreakdownChannels.map((ch) => (
+                      <td key={ch.key} className="right">
+                        <DealerCompareStack
+                          current={dealerBreakdownChannelTotals[ch.key]?.cur}
+                          compare={dealerBreakdownChannelTotals[ch.key]?.prior}
+                          showCompareStack={compareActive}
+                          currentLabel={curLabel}
+                          compareLabel={priLabel}
+                          deltaLabel={compareDeltaLabel}
+                        />
+                      </td>
+                    ))}
+                    <td className="right">
+                      <DealerCompareStack
+                        current={dealerBreakdownCostTotal.cur}
+                        compare={dealerBreakdownCostTotal.prior}
+                        showCompareStack={compareActive}
+                        currentLabel={curLabel}
+                        compareLabel={priLabel}
+                        deltaLabel={compareDeltaLabel}
+                        format="currency"
+                      />
+                    </td>
+                    <td className="right">
+                      <DealerCompareStack
+                        current={dealerBreakdownCostTotal.costPerVdp}
+                        compare={dealerBreakdownCostTotal.costPerVdpPrior}
+                        showCompareStack={compareActive}
+                        currentLabel={curLabel}
+                        compareLabel={priLabel}
+                        deltaLabel={compareDeltaLabel}
+                        format="costPerVdp"
+                      />
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+            {dealerBreakdownSummaryRows.length > 10 && (
+              <div className="vdp-scroll-hint">
+                Showing 10 of {dealerBreakdownSummaryRows.length} dealers — scroll for
+                more
+              </div>
+            )}
+          </>
         )}
       </Card>
 

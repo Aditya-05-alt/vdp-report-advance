@@ -127,6 +127,175 @@
   font-weight: 500;
 }
 
+/* Dealer Breakdown stacked compare (Agency-style single metric column) */
+.vdp-table--dealer-breakdown .vdp-cell-empty {
+  color: var(--vdp-muted);
+  font-size: 12px;
+}
+.vdp-table--dealer-compare td.right {
+  vertical-align: top;
+  min-width: 110px;
+}
+/* Footer row scrolls vertically; only Dealer/Total stay frozen on X */
+.vdp-table-scroll .vdp-table--dealer-breakdown tfoot td:not(.vdp-db-sticky) {
+  position: static;
+  bottom: auto;
+  z-index: auto;
+  box-shadow: none;
+  background: #f8fafc;
+  font-weight: 700;
+}
+.vdp-table-scroll .vdp-table--dealer-breakdown tfoot td.vdp-db-sticky {
+  position: sticky;
+  bottom: auto;
+  background: #f8fafc !important;
+  font-weight: 700;
+}
+/* Freeze Dealer + Total on horizontal scroll */
+.vdp-dealer-breakdown-scroll {
+  --db-dealer-w: 200px;
+  --db-total-w: 120px;
+}
+.vdp-table--dealer-breakdown {
+  border-collapse: separate;
+  border-spacing: 0;
+  min-width: 100%;
+}
+.vdp-table--dealer-breakdown th.vdp-db-sticky,
+.vdp-table--dealer-breakdown td.vdp-db-sticky {
+  position: sticky;
+  z-index: 2;
+  background: #fff;
+  box-sizing: border-box;
+}
+.vdp-table--dealer-breakdown thead th.vdp-db-sticky {
+  z-index: 4;
+  background: #fff;
+}
+.vdp-table--dealer-breakdown tfoot td.vdp-db-sticky {
+  position: sticky;
+  z-index: 3;
+  background: #f8fafc !important;
+}
+.vdp-table--dealer-breakdown .vdp-db-sticky--dealer {
+  left: 0;
+  width: var(--db-dealer-w);
+  min-width: var(--db-dealer-w);
+  max-width: var(--db-dealer-w);
+  border-right: 1px solid var(--vdp-border);
+}
+.vdp-table--dealer-breakdown .vdp-db-sticky--total {
+  left: var(--db-dealer-w);
+  width: var(--db-total-w);
+  min-width: var(--db-total-w);
+  max-width: var(--db-total-w);
+  border-right: 1px solid var(--vdp-border);
+  box-shadow: 4px 0 8px -4px rgba(15, 23, 42, 0.12);
+}
+.vdp-table--dealer-breakdown tbody tr:hover td.vdp-db-sticky {
+  background: #f8fafc;
+}
+/* Equal-width channel/cost headers — wrap on spaces only, bottom-aligned */
+.vdp-table--dealer-breakdown thead th.vdp-db-ch-head {
+  vertical-align: bottom;
+  text-align: right;
+  white-space: normal;
+  box-sizing: border-box;
+  width: 88px;
+  min-width: 88px;
+  max-width: 88px;
+  height: 3.6em;
+  padding: 6px 8px;
+  line-height: 1.25;
+}
+.vdp-table--dealer-breakdown thead th.vdp-db-ch-head .vdp-db-ch-label {
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  width: 100%;
+  height: 100%;
+  min-height: 2.8em;
+  margin: 0;
+  text-align: right;
+  line-height: 1.25;
+  /* Keep same font as .vdp-table th — do not override size/weight/case/color */
+  overflow-wrap: normal;
+  word-break: normal;
+  hyphens: none;
+  white-space: normal;
+}
+.vdp-table--dealer-breakdown td.right:not(.vdp-db-sticky) {
+  width: 88px;
+  min-width: 88px;
+  max-width: 88px;
+  box-sizing: border-box;
+  vertical-align: top;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+.vdp-compare-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  min-width: 0;
+  width: 100%;
+}
+.vdp-compare-line {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+.vdp-compare-line--pct {
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 2px;
+  padding-top: 4px;
+  border-top: 1px solid var(--vdp-border);
+}
+.vdp-compare-lbl {
+  flex: 0 0 auto;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--vdp-muted);
+  text-align: right;
+  line-height: 1.2;
+}
+.vdp-compare-num {
+  flex: 0 0 auto;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  line-height: 1.2;
+  color: var(--vdp-ink);
+}
+.vdp-compare-num--prev {
+  color: var(--vdp-muted);
+  font-weight: 600;
+  font-size: 12px;
+}
+.vdp-compare-pct {
+  flex: 0 0 auto;
+  text-align: right;
+  line-height: 1;
+}
+
 .vdp-compare-switch {
   display: inline-flex;
   align-items: center;

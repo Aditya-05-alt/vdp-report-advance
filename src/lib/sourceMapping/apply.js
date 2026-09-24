@@ -147,11 +147,23 @@ export function toMappingMap(mapping) {
   const map = new Map();
   if (Array.isArray(mapping)) {
     for (const e of mapping) {
-      map.set(rawPairKey(e.rawSource ?? e.raw_source, e.rawMedium ?? e.raw_medium), e.channelId ?? e.channel_id);
+      map.set(
+        rawPairKey(e.rawSource ?? e.raw_source, e.rawMedium ?? e.raw_medium),
+        e.channelId ?? e.channel_id
+      );
     }
   } else if (mapping && typeof mapping === 'object') {
     for (const [k, v] of Object.entries(mapping)) {
-      map.set(String(k).toLowerCase(), v);
+      const raw = String(k);
+      if (raw.includes('|||')) {
+        const [src, ...rest] = raw.split('|||');
+        map.set(rawPairKey(src, rest.join('|||')), v);
+      } else if (raw.includes('||')) {
+        const [src, ...rest] = raw.split('||');
+        map.set(rawPairKey(src, rest.join('||')), v);
+      } else {
+        map.set(raw.toLowerCase(), v);
+      }
     }
   }
   return map;

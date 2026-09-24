@@ -89,6 +89,24 @@ function rulesFromMappingObj(mapping) {
   });
 }
 
+function resolveMappedChannelId(rawSource, rawMedium, mappingMap, validIds) {
+  const key = rawPairKey(rawSource, rawMedium);
+  let id = mappingMap instanceof Map ? mappingMap.get(key) : mappingMap?.[key];
+  // Legacy keys sometimes used "||" instead of "|||".
+  if (!id && mappingMap instanceof Map) {
+    const legacy = `${String(rawSource || '')
+      .trim()
+      .toLowerCase()}||${String(rawMedium || '')
+      .trim()
+      .toLowerCase()}`;
+    id = mappingMap.get(legacy);
+  }
+  id = String(id || '').trim();
+  if (!id || id === UNMAPPED_ID) return UNMAPPED_ID;
+  if (validIds && !validIds.has(id)) return UNMAPPED_ID;
+  return id;
+}
+
 async function fetchRawPreview({ clientId, clientIds, allDealers }) {
   const qs = new URLSearchParams({
     from: MTD.curFrom,
@@ -307,6 +325,20 @@ export default function SourceMappingPanel() {
 
   const mappingMap = useMemo(() => toMappingMap(mapping), [mapping]);
 
+  const validChannelIds = useMemo(
+    () => new Set((channels || []).map((c) => String(c.id))),
+    [channels]
+  );
+
+  const channelIdByName = useMemo(() => {
+    const map = new Map();
+    for (const c of channels || []) {
+      map.set(String(c.name || '').trim().toLowerCase(), c.id);
+      map.set(String(c.id || '').trim().toLowerCase(), c.id);
+    }
+    return map;
+  }, [channels]);
+
   const previewRows = useMemo(
     () => aggregateRawToChannels(rawRows, channels, mappingMap),
     [rawRows, channels, mappingMap]
@@ -314,11 +346,37 @@ export default function SourceMappingPanel() {
 
   const filteredRaw = useMemo(() => {
     const q = search.trim().toLowerCase();
-    let rows = rawRows.map((r) => ({
-      ...r,
-      channelId: mappingMap.get(rawPairKey(r.rawSource, r.rawMedium)) || UNMAPPED_ID,
-      rawChannelLabel: formatRawChannel(r.rawChannel),
-    }));
+    const wantedRaw = String(filterMappedChannel || '').trim();
+    const wantedId =
+      channelIdByName.get(wantedRaw.toLowerCase()) || wantedRaw || '';
+    const wantedName = String(
+      (channels || []).find((c) => c.id === wantedId)?.name || ''
+    )
+      .trim()
+      .toLowerCase();
+
+    // Dedupe by pair id (facebook vs Facebook can collide after normalize).
+    const seen = new Set();
+    let rows = [];
+    for (const r of rawRows || []) {
+      const id =
+        r.id || rawPairKey(r.rawSource, r.rawMedium);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const channelId = resolveMappedChannelId(
+        r.rawSource,
+        r.rawMedium,
+        mappingMap,
+        validChannelIds
+      );
+      rows.push({
+        ...r,
+        id,
+        channelId,
+        rawChannelLabel: formatRawChannel(r.rawChannel),
+      });
+    }
+
     if (filterSource) {
       rows = rows.filter((r) => String(r.rawSource) === filterSource);
     }
@@ -326,10 +384,18 @@ export default function SourceMappingPanel() {
       rows = rows.filter((r) => String(r.rawMedium) === filterMedium);
     }
     if (filterChannel) {
-      rows = rows.filter((r) => formatRawChannel(r.rawChannel) === filterChannel);
+      rows = rows.filter((r) => r.rawChannelLabel === filterChannel);
     }
-    if (filterMappedChannel) {
-      rows = rows.filter((r) => r.channelId === filterMappedChannel);
+    // Strict: Mapped Channel filter only keeps rows assigned to that channel id.
+    if (wantedId) {
+      rows = rows.filter((r) => r.channelId === wantedId);
+      // Put GA4-raw matches first so "aligned" rows aren't buried under big mismatches.
+      rows = [...rows].sort((a, b) => {
+        const aHit = a.rawChannelLabel.toLowerCase() === wantedName ? 0 : 1;
+        const bHit = b.rawChannelLabel.toLowerCase() === wantedName ? 0 : 1;
+        if (aHit !== bHit) return aHit - bHit;
+        return (Number(b.pageViews) || 0) - (Number(a.pageViews) || 0);
+      });
     }
     if (q) {
       rows = rows.filter(
@@ -344,12 +410,23 @@ export default function SourceMappingPanel() {
   }, [
     rawRows,
     mappingMap,
+    validChannelIds,
+    channelIdByName,
+    channels,
     search,
     filterSource,
     filterMedium,
     filterChannel,
     filterMappedChannel,
   ]);
+
+  const filterEpoch = [
+    filterMappedChannel,
+    filterChannel,
+    filterSource,
+    filterMedium,
+    search,
+  ].join('|');
 
   const sourceFilterOpts = useMemo(() => {
     const set = new Set(rawRows.map((r) => String(r.rawSource || '')));
@@ -380,17 +457,25 @@ export default function SourceMappingPanel() {
   const channelCounts = useMemo(() => {
     const counts = Object.fromEntries(channels.map((c) => [c.id, 0]));
     for (const r of rawRows) {
-      const id = mappingMap.get(rawPairKey(r.rawSource, r.rawMedium)) || UNMAPPED_ID;
+      const id = resolveMappedChannelId(
+        r.rawSource,
+        r.rawMedium,
+        mappingMap,
+        validChannelIds
+      );
       counts[id] = (counts[id] || 0) + 1;
     }
     for (const [key, channelId] of Object.entries(mapping)) {
       const inRaw = rawRows.some(
         (r) => rawPairKey(r.rawSource, r.rawMedium) === key
       );
-      if (!inRaw) counts[channelId] = (counts[channelId] || 0) + 1;
+      if (!inRaw) {
+        const id = validChannelIds.has(channelId) ? channelId : UNMAPPED_ID;
+        counts[id] = (counts[id] || 0) + 1;
+      }
     }
     return counts;
-  }, [channels, rawRows, mapping, mappingMap]);
+  }, [channels, rawRows, mapping, mappingMap, validChannelIds]);
 
   const pvByChannel = useMemo(() => {
     return Object.fromEntries(previewRows.map((r) => [r.id, r.pageViews]));
@@ -920,8 +1005,20 @@ export default function SourceMappingPanel() {
         </h3>
         <p className="src-map-sub">
           Select rows to bulk-assign, or change a single row&apos;s channel from its
-          dropdown.
+          dropdown. &quot;By Mapped Channel&quot; filters the last column only — Raw
+          Channel (GA4) can still differ.
         </p>
+        {filterMappedChannel ? (
+          <p className="src-map-sub" style={{ marginTop: -4, marginBottom: 10 }}>
+            Showing <strong>Mapped Channel</strong> ={' '}
+            <strong>
+              {mappedChannelFilterOpts.find((c) => c.id === filterMappedChannel)
+                ?.name || filterMappedChannel}
+            </strong>{' '}
+            only ({filteredRaw.length} rows). Raw Channel (GA4) can still differ —
+            that is expected.
+          </p>
+        ) : null}
         <div className="src-map-toolbar" style={{ marginBottom: 10 }}>
           <input
             type="text"
@@ -937,7 +1034,7 @@ export default function SourceMappingPanel() {
             onChange={(e) => setFilterChannel(e.target.value)}
             aria-label="Filter by channel"
           >
-            <option value="">By Channel</option>
+            <option value="">By Raw Channel</option>
             {channelFilterOpts.map((c) => (
               <option key={c} value={c}>
                 {c}
@@ -973,10 +1070,13 @@ export default function SourceMappingPanel() {
           <select
             className="src-map-select src-map-select--filter"
             value={filterMappedChannel}
-            onChange={(e) => setFilterMappedChannel(e.target.value)}
+            onChange={(e) => {
+              setFilterMappedChannel(e.target.value);
+              setSelected(new Set());
+            }}
             aria-label="Filter by mapped channel"
           >
-            <option value="">Mapped Channel</option>
+            <option value="">By Mapped Channel</option>
             {mappedChannelFilterOpts.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
@@ -1044,7 +1144,7 @@ export default function SourceMappingPanel() {
                     onChange={(e) => selectAllVisible(e.target.checked)}
                   />
                 </th>
-                <th>Raw Channel</th>
+                <th>Raw Channel (GA4)</th>
                 <th>Raw Source</th>
                 <th>Raw Medium</th>
                 <th className="right">Page Views (MTD)</th>
@@ -1052,7 +1152,7 @@ export default function SourceMappingPanel() {
                 <th>Mapped Channel</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody key={`raw-body-${filterEpoch}`}>
               {filteredRaw.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="src-map-empty">
@@ -1062,8 +1162,12 @@ export default function SourceMappingPanel() {
                   </td>
                 </tr>
               ) : (
-                filteredRaw.map((r) => (
-                  <tr key={r.id}>
+                filteredRaw.map((r, idx) => {
+                  const mappedId = validChannelIds.has(r.channelId)
+                    ? r.channelId
+                    : UNMAPPED_ID;
+                  return (
+                  <tr key={`${filterEpoch}::${r.id}::${mappedId}::${idx}`}>
                     <td className="src-map-td-check">
                       <input
                         type="checkbox"
@@ -1071,15 +1175,16 @@ export default function SourceMappingPanel() {
                         onChange={() => toggleSelect(r.id)}
                       />
                     </td>
-                    <td>{formatRawChannel(r.rawChannel)}</td>
+                    <td>{r.rawChannelLabel}</td>
                     <td>{r.rawSource}</td>
                     <td>{r.rawMedium}</td>
                     <td className="right src-map-num">{fmt(r.pageViews)}</td>
                     <td className="right src-map-num">{fmt(r.vdpViews)}</td>
                     <td>
                       <select
+                        key={`map-${filterEpoch}-${r.id}-${mappedId}`}
                         className="src-map-select src-map-select--map"
-                        value={r.channelId}
+                        value={mappedId}
                         onChange={(e) =>
                           assignOne(r.rawSource, r.rawMedium, e.target.value)
                         }
@@ -1092,7 +1197,8 @@ export default function SourceMappingPanel() {
                       </select>
                     </td>
                   </tr>
-                ))
+                  );
+                })
               )}
             </tbody>
           </table>

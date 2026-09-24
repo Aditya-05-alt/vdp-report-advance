@@ -89,44 +89,23 @@ function rulesFromMappingObj(mapping) {
   });
 }
 
-function mergeRawLists(lists) {
-  const map = new Map();
-  for (const rows of lists) {
-    for (const r of rows || []) {
-      const key = r.id || rawPairKey(r.rawSource, r.rawMedium);
-      const prev = map.get(key);
-      if (!prev) {
-        map.set(key, {
-          id: key,
-          rawSource: r.rawSource,
-          rawMedium: r.rawMedium,
-          rawChannel: r.rawChannel || '(not set)',
-          pageViews: Number(r.pageViews) || 0,
-          vdpViews: Number(r.vdpViews) || 0,
-        });
-      } else {
-        prev.pageViews += Number(r.pageViews) || 0;
-        prev.vdpViews += Number(r.vdpViews) || 0;
-        if (
-          (!prev.rawChannel || prev.rawChannel === '(not set)') &&
-          r.rawChannel
-        ) {
-          prev.rawChannel = r.rawChannel;
-        }
-      }
-    }
-  }
-  return [...map.values()].sort(
-    (a, b) => b.pageViews - a.pageViews || a.rawSource.localeCompare(b.rawSource)
-  );
-}
-
-async function fetchRawForClient(clientId) {
+async function fetchRawPreview({ clientId, clientIds, allDealers }) {
   const qs = new URLSearchParams({
-    clientId,
     from: MTD.curFrom,
     to: MTD.curTo,
   });
+  // Prefer allDealers=1 without giant clientIds query (avoids huge URLs).
+  if (allDealers) {
+    qs.set('allDealers', '1');
+  } else if (clientIds?.length > 1) {
+    qs.set('clientIds', clientIds.join(','));
+  } else if (clientIds?.length === 1) {
+    qs.set('clientId', clientIds[0]);
+  } else if (clientId) {
+    qs.set('clientId', clientId);
+  } else {
+    return [];
+  }
   const res = await fetch(`/api/dashboard/source-mapping/raw?${qs}`, {
     credentials: 'same-origin',
   });
@@ -285,10 +264,13 @@ export default function SourceMappingPanel() {
     }
     setRawLoading(true);
     try {
-      const lists = await Promise.all(
-        previewClientIds.map((id) => fetchRawForClient(id))
-      );
-      setRawRows(mergeRawLists(lists));
+      // One bulk RPC for All / Multi — single browser round-trip.
+      const rows = await fetchRawPreview({
+        allDealers: mapMode === 'all',
+        clientIds: mapMode === 'all' ? undefined : previewClientIds,
+        clientId: mapMode === 'single' ? previewClientIds[0] : undefined,
+      });
+      setRawRows(rows);
       setError(null);
     } catch (err) {
       setError(err.message || 'Failed to load raw sources');
@@ -296,7 +278,7 @@ export default function SourceMappingPanel() {
     } finally {
       setRawLoading(false);
     }
-  }, [previewClientIds]);
+  }, [previewClientIds, mapMode]);
 
   useEffect(() => {
     loadConfig();

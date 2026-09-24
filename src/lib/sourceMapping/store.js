@@ -4,6 +4,12 @@ import {
   rawPairKey,
 } from '@/lib/sourceMapping/defaults';
 
+/** Advance-only tables — isolated from shared smart_source_mapping_*. */
+export const CHANNELS_TABLE = 'smart_source_mapping_channels_advance';
+export const RULES_TABLE = 'smart_source_mapping_rules_advance';
+
+const PAGE_SIZE = 1000;
+
 export function normalizeChannelRow(row) {
   return {
     id: String(row.id),
@@ -22,20 +28,47 @@ export function normalizeRuleRow(row) {
   };
 }
 
+/** PostgREST defaults to 1000 rows — page until exhausted so saves don't truncate. */
+async function fetchAllRows(supabase, table, columns, { order } = {}) {
+  const all = [];
+  let from = 0;
+  for (;;) {
+    let q = supabase.from(table).select(columns).range(from, from + PAGE_SIZE - 1);
+    if (order?.column) {
+      q = q.order(order.column, { ascending: order.ascending !== false });
+    }
+    const { data, error } = await q;
+    if (error) throw error;
+    const batch = data || [];
+    all.push(...batch);
+    if (batch.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+  return all;
+}
+
 export async function loadSourceMapping(supabase) {
-  const [{ data: chRows, error: chErr }, { data: ruleRows, error: ruleErr }] =
-    await Promise.all([
-      supabase
-        .from('smart_source_mapping_channels')
-        .select('id, name, color, sort_order, is_unmapped')
-        .order('sort_order', { ascending: true }),
-      supabase
-        .from('smart_source_mapping_rules')
-        .select('raw_source, raw_medium, channel_id'),
+  try {
+    const [chRows, ruleRows] = await Promise.all([
+      fetchAllRows(supabase, CHANNELS_TABLE, 'id, name, color, sort_order, is_unmapped', {
+        order: { column: 'sort_order', ascending: true },
+      }),
+      fetchAllRows(supabase, RULES_TABLE, 'id, raw_source, raw_medium, channel_id', {
+        order: { column: 'id', ascending: true },
+      }),
     ]);
 
-  if (chErr || ruleErr) {
-    const msg = chErr?.message || ruleErr?.message || 'Failed to load source mapping';
+    let channels = (chRows || []).map(normalizeChannelRow);
+    if (!channels.length) channels = defaultChannels();
+
+    const rules = (ruleRows || []).map(normalizeRuleRow);
+    const mapping = Object.fromEntries(
+      rules.map((r) => [rawPairKey(r.rawSource, r.rawMedium), r.channelId])
+    );
+
+    return { channels, mapping, rules, fromDefaults: false, missingTable: false };
+  } catch (err) {
+    const msg = err?.message || 'Failed to load source mapping';
     const missing = /could not find the table|relation .* does not exist|schema cache/i.test(
       msg
     );
@@ -53,16 +86,6 @@ export async function loadSourceMapping(supabase) {
       error: msg,
     };
   }
-
-  let channels = (chRows || []).map(normalizeChannelRow);
-  if (!channels.length) channels = defaultChannels();
-
-  const rules = (ruleRows || []).map(normalizeRuleRow);
-  const mapping = Object.fromEntries(
-    rules.map((r) => [rawPairKey(r.rawSource, r.rawMedium), r.channelId])
-  );
-
-  return { channels, mapping, rules, fromDefaults: false, missingTable: false };
 }
 
 export async function saveSourceMapping(supabase, { channels, rules }) {
@@ -91,8 +114,15 @@ export async function saveSourceMapping(supabase, { channels, rules }) {
   const ruleList = [];
   const seen = new Set();
   for (const r of rules || []) {
-    const rawSource = String(r.rawSource || '').trim() || '(direct)';
-    const rawMedium = String(r.rawMedium || '').trim() || '(none)';
+    // Normalize to lowercase so UNIQUE (raw_source, raw_medium) matches rawPairKey.
+    const rawSource =
+      String(r.rawSource || '')
+        .trim()
+        .toLowerCase() || '(direct)';
+    const rawMedium =
+      String(r.rawMedium || '')
+        .trim()
+        .toLowerCase() || '(none)';
     const key = rawPairKey(rawSource, rawMedium);
     if (seen.has(key)) continue;
     seen.add(key);
@@ -108,37 +138,40 @@ export async function saveSourceMapping(supabase, { channels, rules }) {
 
   // Upsert channels first (never wipe rules before a successful write).
   const { error: upsertChErr } = await supabase
-    .from('smart_source_mapping_channels')
+    .from(CHANNELS_TABLE)
     .upsert(chList, { onConflict: 'id' });
   if (upsertChErr) throw new Error(upsertChErr.message);
 
   const keepIds = chList.map((c) => c.id);
-  const { data: existing } = await supabase
-    .from('smart_source_mapping_channels')
-    .select('id');
-  const toDelete = (existing || [])
+  const existingChannels = await fetchAllRows(supabase, CHANNELS_TABLE, 'id');
+  const toDelete = (existingChannels || [])
     .map((r) => r.id)
     .filter((id) => !keepIds.includes(id));
   if (toDelete.length) {
     const { error: delChErr } = await supabase
-      .from('smart_source_mapping_channels')
+      .from(CHANNELS_TABLE)
       .delete()
       .in('id', toDelete);
     if (delChErr) throw new Error(delChErr.message);
   }
 
+  // Upsert rules in chunks to avoid payload limits.
   if (ruleList.length) {
-    const { error: upsErr } = await supabase
-      .from('smart_source_mapping_rules')
-      .upsert(ruleList, { onConflict: 'raw_source,raw_medium' });
-    if (upsErr) throw new Error(upsErr.message);
+    for (let i = 0; i < ruleList.length; i += PAGE_SIZE) {
+      const chunk = ruleList.slice(i, i + PAGE_SIZE);
+      const { error: upsErr } = await supabase
+        .from(RULES_TABLE)
+        .upsert(chunk, { onConflict: 'raw_source,raw_medium' });
+      if (upsErr) throw new Error(upsErr.message);
+    }
   }
 
-  // Drop only rules that are no longer in the saved mapping.
-  const { data: existingRules, error: listRulesErr } = await supabase
-    .from('smart_source_mapping_rules')
-    .select('id, raw_source, raw_medium');
-  if (listRulesErr) throw new Error(listRulesErr.message);
+  // Drop only rules that are no longer in the saved mapping (paginated read).
+  const existingRules = await fetchAllRows(
+    supabase,
+    RULES_TABLE,
+    'id, raw_source, raw_medium'
+  );
 
   const keepKeys = new Set(
     ruleList.map((r) => rawPairKey(r.raw_source, r.raw_medium))
@@ -146,11 +179,13 @@ export async function saveSourceMapping(supabase, { channels, rules }) {
   const removeIds = (existingRules || [])
     .filter((r) => !keepKeys.has(rawPairKey(r.raw_source, r.raw_medium)))
     .map((r) => r.id);
-  if (removeIds.length) {
+
+  for (let i = 0; i < removeIds.length; i += PAGE_SIZE) {
+    const chunk = removeIds.slice(i, i + PAGE_SIZE);
     const { error: delRuleErr } = await supabase
-      .from('smart_source_mapping_rules')
+      .from(RULES_TABLE)
       .delete()
-      .in('id', removeIds);
+      .in('id', chunk);
     if (delRuleErr) throw new Error(delRuleErr.message);
   }
 

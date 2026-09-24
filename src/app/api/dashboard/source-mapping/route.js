@@ -33,7 +33,7 @@ export async function GET() {
     fromDefaults: data.fromDefaults,
     missingTable: data.missingTable,
     warning: data.missingTable
-      ? 'Deploy supabase/migrations/source_mapping.sql in Supabase SQL editor to persist mappings.'
+      ? 'Deploy supabase/migrations/source_mapping_advance.sql in Supabase SQL editor to persist mappings.'
       : data.error && data.fromDefaults
         ? data.error
         : null,
@@ -71,7 +71,7 @@ export async function PUT(request) {
       fromDefaults: saved.fromDefaults,
       missingTable: saved.missingTable,
       warning: saved.missingTable
-        ? 'Deploy supabase/migrations/source_mapping.sql to persist.'
+        ? 'Deploy supabase/migrations/source_mapping_advance.sql to persist.'
         : null,
     });
   } catch (err) {
@@ -83,7 +83,7 @@ export async function PUT(request) {
       {
         error: msg,
         hint: missing
-          ? 'Deploy supabase/migrations/source_mapping.sql in Supabase SQL editor.'
+          ? 'Deploy supabase/migrations/source_mapping_advance.sql in Supabase SQL editor.'
           : undefined,
       },
       { status: 500 }

@@ -8,7 +8,11 @@ const CONCURRENCY = 4;
 
 function mapRows(data) {
   return (data || []).map((r) => ({
-    id: `${String(r.raw_source || '').toLowerCase()}|||${String(r.raw_medium || '').toLowerCase()}`,
+    id: `${String(r.raw_source || '').trim().toLowerCase()}|||${String(
+      r.raw_medium || ''
+    )
+      .trim()
+      .toLowerCase()}`,
     rawSource: r.raw_source,
     rawMedium: r.raw_medium,
     rawChannel: r.raw_channel || r.channel || '(not set)',
@@ -17,14 +21,29 @@ function mapRows(data) {
   }));
 }
 
+/** Case-insensitive merge — belts-and-braces if RPC/fallback still emits casing variants. */
 function mergeMappedRows(lists) {
   const map = new Map();
   for (const rows of lists) {
     for (const r of rows || []) {
-      if (!r?.id) continue;
-      const prev = map.get(r.id);
+      const id =
+        r?.id ||
+        `${String(r?.rawSource || '')
+          .trim()
+          .toLowerCase()}|||${String(r?.rawMedium || '')
+          .trim()
+          .toLowerCase()}`;
+      if (!id || id === '|||') continue;
+      const prev = map.get(id);
       if (!prev) {
-        map.set(r.id, { ...r });
+        map.set(id, {
+          ...r,
+          id,
+          rawSource: String(r.rawSource || '').trim() || '(direct)',
+          rawMedium: String(r.rawMedium || '').trim() || '(none)',
+          pageViews: Number(r.pageViews) || 0,
+          vdpViews: Number(r.vdpViews) || 0,
+        });
       } else {
         prev.pageViews += Number(r.pageViews) || 0;
         prev.vdpViews += Number(r.vdpViews) || 0;
@@ -44,16 +63,47 @@ function mergeMappedRows(lists) {
   );
 }
 
+const RPC_PAGE = 1000;
+
+/** PostgREST caps RPC at 1000 rows — page until exhausted. */
+async function rpcAll(supabase, fn, args) {
+  const all = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .rpc(fn, args)
+      .range(from, from + RPC_PAGE - 1);
+    if (error) throw new Error(error.message);
+    const batch = data || [];
+    all.push(...batch);
+    if (batch.length < RPC_PAGE) break;
+    from += RPC_PAGE;
+  }
+  return all;
+}
+
 async function fetchOneDealer(supabase, clientId, from, to) {
-  const { data, error } = await supabase.rpc(
-    'get_raw_source_medium_traffic_advance',
-    {
-      p_client_id: clientId,
-      p_from: from,
-      p_to: to,
-    }
-  );
-  if (error) throw new Error(error.message);
+  // Prefer daily cache via bulk RPC — live page_data scan times out on big dealers.
+  try {
+    const cached = await rpcAll(
+      supabase,
+      'get_raw_source_medium_traffic_bulk_advance',
+      {
+        p_from: from,
+        p_to: to,
+        p_client_ids: [String(clientId).trim()],
+      }
+    );
+    if (cached.length) return mapRows(cached);
+  } catch {
+    /* fall through to single-dealer RPC (also cache-backed after deploy) */
+  }
+
+  const data = await rpcAll(supabase, 'get_raw_source_medium_traffic_advance', {
+    p_client_id: clientId,
+    p_from: from,
+    p_to: to,
+  });
   return mapRows(data);
 }
 
@@ -130,10 +180,12 @@ export async function GET(request) {
   });
 
   try {
-    // Single dealer — direct indexed RPC.
+    // Single dealer — cache-first (live page_data timed out on large dealers).
     if (!useMulti && !allDealers) {
       const singleId = clientId || clientIds[0];
-      const rows = await fetchOneDealer(supabase, singleId, from, to);
+      const rows = mergeMappedRows([
+        await fetchOneDealer(supabase, singleId, from, to),
+      ]);
       return NextResponse.json({ rows, source: 'single' });
     }
 
@@ -157,18 +209,27 @@ export async function GET(request) {
     if (!ids.length) return NextResponse.json({ rows: [] });
 
     // Fast path: daily cache table (smart_ga4_src_med_daily_advance).
-    const bulk = await supabase.rpc(
-      'get_raw_source_medium_traffic_bulk_advance',
-      {
-        p_from: from,
-        p_to: to,
-        p_client_ids: ids,
-      }
-    );
+    let bulkData = null;
+    let bulkError = null;
+    try {
+      bulkData = await rpcAll(
+        supabase,
+        'get_raw_source_medium_traffic_bulk_advance',
+        {
+          p_from: from,
+          p_to: to,
+          p_client_ids: ids,
+        }
+      );
+    } catch (e) {
+      bulkError = e;
+    }
 
-    if (!bulk.error && Array.isArray(bulk.data) && bulk.data.length > 0) {
+    if (Array.isArray(bulkData) && bulkData.length > 0) {
+      // Merge case variants (Facebook vs facebook) so All Dealers counts
+      // match the Raw Sources table (unique source|||medium pairs).
       return NextResponse.json({
-        rows: mapRows(bulk.data),
+        rows: mergeMappedRows([mapRows(bulkData)]),
         source: 'cache',
       });
     }
@@ -176,7 +237,7 @@ export async function GET(request) {
     // Slow path fallback — soft deadline so proxy never returns opaque 500.
     console.warn(
       '[source-mapping/raw] cache miss/empty, concurrent fallback:',
-      bulk.error?.message || 'empty'
+      bulkError?.message || 'empty'
     );
     const out = await fetchDealersWithDeadline(
       supabase,
@@ -190,7 +251,7 @@ export async function GET(request) {
       return NextResponse.json(
         {
           error:
-            bulk.error?.message ||
+            bulkError?.message ||
             'No source/medium data available yet. Try a single dealer, or wait for cache backfill.',
         },
         { status: 503 }

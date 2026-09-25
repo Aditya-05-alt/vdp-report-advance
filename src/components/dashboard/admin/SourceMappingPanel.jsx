@@ -330,6 +330,35 @@ export default function SourceMappingPanel() {
     [channels]
   );
 
+  /**
+   * One row per source|||medium (case-insensitive), views summed.
+   * Channels "Raw Sources" counts and the Raw Sources table must use this —
+   * raw API can return duplicate pairs (casing) that inflated Paid/Organic Social.
+   */
+  const uniqueRawRows = useMemo(() => {
+    const byKey = new Map();
+    for (const r of rawRows || []) {
+      const key = rawPairKey(r.rawSource, r.rawMedium);
+      const pv = Number(r.pageViews) || 0;
+      const vv = Number(r.vdpViews) || 0;
+      const prev = byKey.get(key);
+      if (prev) {
+        prev.pageViews += pv;
+        prev.vdpViews += vv;
+        continue;
+      }
+      byKey.set(key, {
+        ...r,
+        id: key,
+        rawSource: String(r.rawSource || '').trim() || '(direct)',
+        rawMedium: String(r.rawMedium || '').trim() || '(none)',
+        pageViews: pv,
+        vdpViews: vv,
+      });
+    }
+    return [...byKey.values()];
+  }, [rawRows]);
+
   const channelIdByName = useMemo(() => {
     const map = new Map();
     for (const c of channels || []) {
@@ -340,9 +369,25 @@ export default function SourceMappingPanel() {
   }, [channels]);
 
   const previewRows = useMemo(
-    () => aggregateRawToChannels(rawRows, channels, mappingMap),
-    [rawRows, channels, mappingMap]
+    () => aggregateRawToChannels(uniqueRawRows, channels, mappingMap),
+    [uniqueRawRows, channels, mappingMap]
   );
+
+  const enrichedRawRows = useMemo(() => {
+    return uniqueRawRows.map((r) => {
+      const channelId = resolveMappedChannelId(
+        r.rawSource,
+        r.rawMedium,
+        mappingMap,
+        validChannelIds
+      );
+      return {
+        ...r,
+        channelId,
+        rawChannelLabel: formatRawChannel(r.rawChannel),
+      };
+    });
+  }, [uniqueRawRows, mappingMap, validChannelIds]);
 
   const filteredRaw = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -355,27 +400,7 @@ export default function SourceMappingPanel() {
       .trim()
       .toLowerCase();
 
-    // Dedupe by pair id (facebook vs Facebook can collide after normalize).
-    const seen = new Set();
-    let rows = [];
-    for (const r of rawRows || []) {
-      const id =
-        r.id || rawPairKey(r.rawSource, r.rawMedium);
-      if (seen.has(id)) continue;
-      seen.add(id);
-      const channelId = resolveMappedChannelId(
-        r.rawSource,
-        r.rawMedium,
-        mappingMap,
-        validChannelIds
-      );
-      rows.push({
-        ...r,
-        id,
-        channelId,
-        rawChannelLabel: formatRawChannel(r.rawChannel),
-      });
-    }
+    let rows = enrichedRawRows;
 
     if (filterSource) {
       rows = rows.filter((r) => String(r.rawSource) === filterSource);
@@ -408,9 +433,7 @@ export default function SourceMappingPanel() {
     }
     return rows;
   }, [
-    rawRows,
-    mappingMap,
-    validChannelIds,
+    enrichedRawRows,
     channelIdByName,
     channels,
     search,
@@ -429,19 +452,21 @@ export default function SourceMappingPanel() {
   ].join('|');
 
   const sourceFilterOpts = useMemo(() => {
-    const set = new Set(rawRows.map((r) => String(r.rawSource || '')));
+    const set = new Set(uniqueRawRows.map((r) => String(r.rawSource || '')));
     return [...set].filter(Boolean).sort((a, b) => a.localeCompare(b));
-  }, [rawRows]);
+  }, [uniqueRawRows]);
 
   const mediumFilterOpts = useMemo(() => {
-    const set = new Set(rawRows.map((r) => String(r.rawMedium || '')));
+    const set = new Set(uniqueRawRows.map((r) => String(r.rawMedium || '')));
     return [...set].filter(Boolean).sort((a, b) => a.localeCompare(b));
-  }, [rawRows]);
+  }, [uniqueRawRows]);
 
   const channelFilterOpts = useMemo(() => {
-    const set = new Set(rawRows.map((r) => formatRawChannel(r.rawChannel)));
+    const set = new Set(
+      uniqueRawRows.map((r) => formatRawChannel(r.rawChannel))
+    );
     return [...set].filter(Boolean).sort((a, b) => a.localeCompare(b));
-  }, [rawRows]);
+  }, [uniqueRawRows]);
 
   const mappedChannelFilterOpts = useMemo(() => {
     return (channels || [])
@@ -455,27 +480,13 @@ export default function SourceMappingPanel() {
   }, [channels]);
 
   const channelCounts = useMemo(() => {
+    // Same unique pairs as Raw Sources table (by mapped channel).
     const counts = Object.fromEntries(channels.map((c) => [c.id, 0]));
-    for (const r of rawRows) {
-      const id = resolveMappedChannelId(
-        r.rawSource,
-        r.rawMedium,
-        mappingMap,
-        validChannelIds
-      );
-      counts[id] = (counts[id] || 0) + 1;
-    }
-    for (const [key, channelId] of Object.entries(mapping)) {
-      const inRaw = rawRows.some(
-        (r) => rawPairKey(r.rawSource, r.rawMedium) === key
-      );
-      if (!inRaw) {
-        const id = validChannelIds.has(channelId) ? channelId : UNMAPPED_ID;
-        counts[id] = (counts[id] || 0) + 1;
-      }
+    for (const r of enrichedRawRows) {
+      counts[r.channelId] = (counts[r.channelId] || 0) + 1;
     }
     return counts;
-  }, [channels, rawRows, mapping, mappingMap, validChannelIds]);
+  }, [channels, enrichedRawRows]);
 
   const pvByChannel = useMemo(() => {
     return Object.fromEntries(previewRows.map((r) => [r.id, r.pageViews]));
@@ -998,7 +1009,7 @@ export default function SourceMappingPanel() {
             filterMedium ||
             filterChannel ||
             filterMappedChannel
-              ? ` of ${rawRows.length}`
+              ? ` of ${uniqueRawRows.length}`
               : ''}
             )
           </span>

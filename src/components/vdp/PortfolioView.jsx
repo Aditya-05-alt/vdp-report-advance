@@ -185,10 +185,10 @@ function fmtCost(n, { decimals = 0 } = {}) {
   })}`;
 }
 
-/** Google Ads Cost ÷ VDP views (0 when no VDP). */
-function costPerVdp(cost, vdp) {
+/** Google Ads Cost ÷ Paid Search views (0 when no views). */
+function costPerVdp(cost, paidSearchViews) {
   const c = Number(cost) || 0;
-  const v = Number(vdp) || 0;
+  const v = Number(paidSearchViews) || 0;
   if (v <= 0 || c <= 0) return 0;
   return c / v;
 }
@@ -1006,8 +1006,6 @@ export default function PortfolioView() {
   );
 
   const dealerBreakdownSummaryRows = useMemo(() => {
-    const vdpByDealer = indexRowsByDealer(vdpCur.rows);
-    const vdpPriorByDealer = indexRowsByDealer(vdpPri.rows);
     return (filteredDealerRows || [])
       .map((row) => {
         const id = dealerKey(row.dealer);
@@ -1037,10 +1035,12 @@ export default function PortfolioView() {
         const costPrior = compareActive
           ? costForDealer(adsCostPri, row.dealer)
           : 0;
-        // Always use Total VDP for Cost/VDP (not page metric / channel filter).
-        const vdpViews = Math.round(Number(vdpByDealer.get(id)?.total) || 0);
-        const vdpViewsPrior = compareActive
-          ? Math.round(Number(vdpPriorByDealer.get(id)?.total) || 0)
+        // Google Paid Search = Ads Cost ÷ Paid Search views.
+        const paidSearchViews = Math.round(
+          Number(channels['paid-search']?.cur) || 0
+        );
+        const paidSearchViewsPrior = compareActive
+          ? Math.round(Number(channels['paid-search']?.prior) || 0)
           : 0;
         return {
           id,
@@ -1052,10 +1052,10 @@ export default function PortfolioView() {
           channels,
           cost,
           costPrior,
-          vdpViews,
-          vdpViewsPrior,
-          costPerVdp: costPerVdp(cost, vdpViews),
-          costPerVdpPrior: costPerVdp(costPrior, vdpViewsPrior),
+          paidSearchViews,
+          paidSearchViewsPrior,
+          costPerVdp: costPerVdp(cost, paidSearchViews),
+          costPerVdpPrior: costPerVdp(costPrior, paidSearchViewsPrior),
         };
       });
   }, [
@@ -1069,8 +1069,6 @@ export default function PortfolioView() {
     channelGrid.dealerRows,
     adsCostCur,
     adsCostPri,
-    vdpCur.rows,
-    vdpPri.rows,
   ]);
 
   const onDbSort = useCallback((key, dir) => {
@@ -1122,19 +1120,19 @@ export default function PortfolioView() {
   const dealerBreakdownCostTotal = useMemo(() => {
     let cur = 0;
     let prior = 0;
-    let vdp = 0;
-    let vdpPrior = 0;
+    let paidSearch = 0;
+    let paidSearchPrior = 0;
     for (const row of dealerBreakdownSummaryRows) {
       cur += Number(row.cost) || 0;
       prior += Number(row.costPrior) || 0;
-      vdp += Number(row.vdpViews) || 0;
-      vdpPrior += Number(row.vdpViewsPrior) || 0;
+      paidSearch += Number(row.paidSearchViews) || 0;
+      paidSearchPrior += Number(row.paidSearchViewsPrior) || 0;
     }
     return {
       cur,
       prior,
-      costPerVdp: costPerVdp(cur, vdp),
-      costPerVdpPrior: costPerVdp(prior, vdpPrior),
+      costPerVdp: costPerVdp(cur, paidSearch),
+      costPerVdpPrior: costPerVdp(prior, paidSearchPrior),
     };
   }, [dealerBreakdownSummaryRows]);
 
@@ -1676,12 +1674,12 @@ export default function PortfolioView() {
                     */}
                     <SortableTh
                       className="right vdp-db-ch-head"
-                      title="Google Paid Search — Ads Cost ÷ Total VDP Views"
+                      title="Google Paid Search — Ads Cost ÷ Paid Search Views"
                       sortKey="costPerVdp"
                       channelSort={dbSort}
                       onChannelSort={onDbSort}
                     >
-                      Cost/VDP
+                      Google Paid Search
                     </SortableTh>
                   </tr>
                 </thead>

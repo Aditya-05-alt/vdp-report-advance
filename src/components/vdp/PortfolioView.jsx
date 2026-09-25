@@ -106,6 +106,12 @@ const DEALER_BREAKDOWN_CHANNEL_DEFS = [
     label: 'Others',
     aliases: ['Others', 'Other', 'others'],
   },
+  // Unmapped column ignored on All Dealers — keep mapping but do not display.
+  // {
+  //   key: 'unmapped',
+  //   label: 'Unmapped',
+  //   aliases: ['Unmapped', 'unmapped'],
+  // },
   {
     key: 'not-set',
     label: '(not set)',
@@ -142,7 +148,7 @@ function resolveChannelColumn(columns, aliases) {
   return null;
 }
 
-/** Prefer defs order; append any matrix columns not covered (before Paid Search). */
+/** Prefer Source Mapping / defs order; only include columns present in the matrix. */
 function buildDealerBreakdownChannels(columns) {
   const cols = columns || [];
   const resolved = DEALER_BREAKDOWN_CHANNEL_DEFS.map((def) => ({
@@ -152,6 +158,8 @@ function buildDealerBreakdownChannels(columns) {
   const used = new Set(resolved.map((d) => d.name).filter(Boolean));
   const extras = cols
     .filter((c) => c && !used.has(c))
+    // Ignore Unmapped column if it still appears in matrix data.
+    .filter((c) => String(c).toLowerCase() !== 'unmapped')
     .map((c) => ({
       key: `extra-${String(c).toLowerCase().replace(/\s+/g, '-')}`,
       label: c,
@@ -159,6 +167,7 @@ function buildDealerBreakdownChannels(columns) {
       name: c,
     }));
 
+  // Keep Paid Search (+ Cross-network if still present) at the end before Cost.
   const paidIdx = resolved.findIndex((d) => d.key === 'paid-search');
   if (paidIdx < 0) return [...resolved, ...extras].filter((d) => d.name);
   return [
@@ -184,26 +193,26 @@ function costPerVdp(cost, vdp) {
   return c / v;
 }
 
-function shortMonthLabel(periodLabel) {
-  if (!periodLabel) return '';
-  const raw = String(periodLabel).trim();
-  const monthYear = raw.match(/^([A-Za-z]{3,9})\s+(\d{4})$/);
-  if (monthYear) {
-    return `${monthYear[1].slice(0, 3)} ${monthYear[2]}`;
-  }
-  const rangeStart = raw.match(/^([A-Za-z]{3,9})\s+\d{1,2},?\s+(\d{4})/);
-  if (rangeStart) {
-    return `${rangeStart[1].slice(0, 3)} ${rangeStart[2]}`;
-  }
-  return raw.length > 8 ? `${raw.slice(0, 8)}…` : raw;
+/** Full period labels under dealer name — row heights match value stacks. */
+function DealerPeriodLegend({ currentLabel, compareLabel, show }) {
+  if (!show || (!currentLabel && !compareLabel)) return null;
+  return (
+    <div className="vdp-dealer-period-legend" aria-label="Compare periods">
+      <div className="vdp-compare-align-row vdp-dealer-period-line--cur">
+        {currentLabel || 'Current'}
+      </div>
+      <div className="vdp-compare-align-row vdp-dealer-period-line--pri">
+        {compareLabel || 'Previous'}
+      </div>
+      <div className="vdp-compare-align-row vdp-compare-align-row--pct" aria-hidden />
+    </div>
+  );
 }
 
 function DealerCompareStack({
   current,
   compare,
   showCompareStack,
-  currentLabel,
-  compareLabel,
   deltaLabel = 'MoM',
   format = 'number',
 }) {
@@ -224,28 +233,21 @@ function DealerCompareStack({
     return <span className="vdp-cell-empty">—</span>;
   }
 
-  const curTag = shortMonthLabel(currentLabel) || 'Current';
-  const prevTag = shortMonthLabel(compareLabel) || 'Previous';
-
   return (
     <div className="vdp-compare-stack">
-      <div className="vdp-compare-line">
-        <span className="vdp-compare-lbl" title={currentLabel}>
-          {curTag}
-        </span>
+      {/* Spacer matches dealer-name row so dates line up with values */}
+      <div className="vdp-compare-name-spacer" aria-hidden />
+      <div className="vdp-compare-align-row">
         <span className="vdp-compare-num vdp-compare-num--cur">
           {cur > 0 ? formatValue(cur) : '—'}
         </span>
       </div>
-      <div className="vdp-compare-line">
-        <span className="vdp-compare-lbl" title={compareLabel}>
-          {prevTag}
-        </span>
+      <div className="vdp-compare-align-row">
         <span className="vdp-compare-num vdp-compare-num--prev">
           {formatValue(cmp)}
         </span>
       </div>
-      <div className="vdp-compare-line vdp-compare-line--pct">
+      <div className="vdp-compare-align-row vdp-compare-align-row--pct">
         <span className="vdp-compare-lbl">{deltaLabel}</span>
         <span className="vdp-compare-pct">
           <Delta value={pctChange(cur, cmp)} size={10} />
@@ -349,6 +351,7 @@ function SortableTh({
   onChannelSort,
   rowSpan,
   colSpan,
+  title,
 }) {
   const active = channelSort.k === sortKey;
   return (
@@ -357,6 +360,7 @@ function SortableTh({
       style={style}
       rowSpan={rowSpan}
       colSpan={colSpan}
+      title={title}
       onClick={() => onChannelSort(sortKey)}
     >
       <div className="vdp-col-sort">
@@ -584,6 +588,8 @@ export default function PortfolioView() {
   const [channelId, setChannelId] = useState('all');
   const [sort, setSort] = useState({ k: 'name', dir: 1 });
   const [channelSort, setChannelSort] = useState({ k: 'name', dir: 1 });
+  /** Dealer Breakdown table sort — default Total high→low. */
+  const [dbSort, setDbSort] = useState({ k: 'cur', dir: -1 });
   const [selectedDealerIds, setSelectedDealerIds] = useState([]);
 
   const [pageCur, setPageCur] = useState({ rows: [], columns: [] });
@@ -1051,8 +1057,7 @@ export default function PortfolioView() {
           costPerVdp: costPerVdp(cost, vdpViews),
           costPerVdpPrior: costPerVdp(costPrior, vdpViewsPrior),
         };
-      })
-      .sort((a, b) => b.cur - a.cur);
+      });
   }, [
     filteredDealerRows,
     priorByDealer,
@@ -1067,6 +1072,38 @@ export default function PortfolioView() {
     vdpCur.rows,
     vdpPri.rows,
   ]);
+
+  const onDbSort = useCallback((key, dir) => {
+    setDbSort((prev) => {
+      if (dir === 1 || dir === -1) return { k: key, dir };
+      if (prev.k === key) return { k: key, dir: -prev.dir };
+      return { k: key, dir: key === 'name' ? 1 : -1 };
+    });
+  }, []);
+
+  const sortedDealerBreakdownRows = useMemo(() => {
+    const key = dbSort.k;
+    const dir = dbSort.dir;
+    const valueOf = (row) => {
+      if (key === 'name') return String(row.name || '');
+      if (key === 'cur') return Number(row.cur) || 0;
+      if (key === 'costPerVdp') return Number(row.costPerVdp) || 0;
+      if (key === 'cost') return Number(row.cost) || 0;
+      if (String(key).startsWith('ch:')) {
+        const chKey = String(key).slice(3);
+        return Number(row.channels?.[chKey]?.cur) || 0;
+      }
+      return 0;
+    };
+    return [...(dealerBreakdownSummaryRows || [])].sort((a, b) => {
+      const av = valueOf(a);
+      const bv = valueOf(b);
+      if (typeof av === 'string' || typeof bv === 'string') {
+        return String(av).localeCompare(String(bv)) * dir;
+      }
+      return (Number(av) - Number(bv)) * dir;
+    });
+  }, [dealerBreakdownSummaryRows, dbSort]);
 
   const dealerBreakdownChannelTotals = useMemo(() => {
     const totals = {};
@@ -1455,6 +1492,7 @@ export default function PortfolioView() {
               setMetric(next);
               setSort({ k: 'name', dir: 1 });
               setChannelSort({ k: 'name', dir: 1 });
+              setDbSort({ k: 'cur', dir: -1 });
             }}
           />
         </ToolbarGroup>
@@ -1598,54 +1636,82 @@ export default function PortfolioView() {
               >
                 <thead>
                   <tr>
-                    <th className="vdp-db-sticky vdp-db-sticky--dealer">
+                    <SortableTh
+                      className="vdp-db-sticky vdp-db-sticky--dealer vdp-db-ch-head"
+                      sortKey="name"
+                      channelSort={dbSort}
+                      onChannelSort={onDbSort}
+                    >
                       Dealer
-                    </th>
-                    <th className="right vdp-db-sticky vdp-db-sticky--total">
+                    </SortableTh>
+                    <SortableTh
+                      className="right vdp-db-sticky vdp-db-sticky--total vdp-db-ch-head"
+                      sortKey="cur"
+                      channelSort={dbSort}
+                      onChannelSort={onDbSort}
+                    >
                       {totalMetricLabel}
-                    </th>
+                    </SortableTh>
                     {dealerBreakdownChannels.map((ch) => (
-                      <th
+                      <SortableTh
                         key={ch.key}
                         className="right vdp-db-ch-head"
                         title={ch.name && ch.name !== ch.label ? ch.name : ch.label}
+                        sortKey={`ch:${ch.key}`}
+                        channelSort={dbSort}
+                        onChannelSort={onDbSort}
                       >
-                        <span className="vdp-db-ch-label">{ch.label}</span>
-                      </th>
+                        {ch.label}
+                      </SortableTh>
                     ))}
-                    <th className="right vdp-db-ch-head">
-                      <span className="vdp-db-ch-label">Cost</span>
-                    </th>
-                    <th
+                    {/* Cost column hidden — keep Cost/VDP only
+                    <SortableTh
+                      className="right vdp-db-ch-head"
+                      sortKey="cost"
+                      channelSort={dbSort}
+                      onChannelSort={onDbSort}
+                    >
+                      Cost
+                    </SortableTh>
+                    */}
+                    <SortableTh
                       className="right vdp-db-ch-head"
                       title="Google Paid Search — Ads Cost ÷ Total VDP Views"
+                      sortKey="costPerVdp"
+                      channelSort={dbSort}
+                      onChannelSort={onDbSort}
                     >
-                      <span className="vdp-db-ch-label">Cost/VDP</span>
-                    </th>
+                      Cost/VDP
+                    </SortableTh>
                   </tr>
                 </thead>
                 <tbody>
-                  {dealerBreakdownSummaryRows.map((r) => (
+                  {sortedDealerBreakdownRows.map((r) => (
                     <tr
                       key={r.id}
                       className="vdp-row-click"
                       onClick={() => openDealer(r.dealer)}
                     >
                       <td className="vdp-dealer-name vdp-db-sticky vdp-db-sticky--dealer">
-                        {r.name}
-                        {r.error ? (
-                          <span className="vdp-vert-tag" style={{ color: '#dc2626' }}>
-                            {r.error}
-                          </span>
-                        ) : null}
+                        <div className="vdp-dealer-cell">
+                          <span className="vdp-dealer-cell-name">{r.name}</span>
+                          <DealerPeriodLegend
+                            show={compareActive}
+                            currentLabel={curLabel}
+                            compareLabel={priLabel}
+                          />
+                          {r.error ? (
+                            <span className="vdp-vert-tag" style={{ color: '#dc2626' }}>
+                              {r.error}
+                            </span>
+                          ) : null}
+                        </div>
                       </td>
                       <td className="right vdp-db-sticky vdp-db-sticky--total">
                         <DealerCompareStack
                           current={r.cur}
                           compare={r.prior}
                           showCompareStack={compareActive}
-                          currentLabel={curLabel}
-                          compareLabel={priLabel}
                           deltaLabel={compareDeltaLabel}
                         />
                       </td>
@@ -1655,30 +1721,26 @@ export default function PortfolioView() {
                             current={r.channels?.[ch.key]?.cur}
                             compare={r.channels?.[ch.key]?.prior}
                             showCompareStack={compareActive}
-                            currentLabel={curLabel}
-                            compareLabel={priLabel}
                             deltaLabel={compareDeltaLabel}
                           />
                         </td>
                       ))}
+                      {/* Cost column hidden
                       <td className="right">
                         <DealerCompareStack
                           current={r.cost}
                           compare={r.costPrior}
                           showCompareStack={compareActive}
-                          currentLabel={curLabel}
-                          compareLabel={priLabel}
                           deltaLabel={compareDeltaLabel}
                           format="currency"
                         />
                       </td>
+                      */}
                       <td className="right">
                         <DealerCompareStack
                           current={r.costPerVdp}
                           compare={r.costPerVdpPrior}
                           showCompareStack={compareActive}
-                          currentLabel={curLabel}
-                          compareLabel={priLabel}
                           deltaLabel={compareDeltaLabel}
                           format="costPerVdp"
                         />
@@ -1689,15 +1751,20 @@ export default function PortfolioView() {
                 <tfoot>
                   <tr>
                     <td className="vdp-db-sticky vdp-db-sticky--dealer">
-                      <strong>Total</strong>
+                      <div className="vdp-dealer-cell">
+                        <strong className="vdp-dealer-cell-name">Total</strong>
+                        <DealerPeriodLegend
+                          show={compareActive}
+                          currentLabel={curLabel}
+                          compareLabel={priLabel}
+                        />
+                      </div>
                     </td>
                     <td className="right vdp-db-sticky vdp-db-sticky--total">
                       <DealerCompareStack
                         current={displayAllTotals.total}
                         compare={priorAllTotals.total}
                         showCompareStack={compareActive}
-                        currentLabel={curLabel}
-                        compareLabel={priLabel}
                         deltaLabel={compareDeltaLabel}
                       />
                     </td>
@@ -1707,30 +1774,26 @@ export default function PortfolioView() {
                           current={dealerBreakdownChannelTotals[ch.key]?.cur}
                           compare={dealerBreakdownChannelTotals[ch.key]?.prior}
                           showCompareStack={compareActive}
-                          currentLabel={curLabel}
-                          compareLabel={priLabel}
                           deltaLabel={compareDeltaLabel}
                         />
                       </td>
                     ))}
+                    {/* Cost column hidden
                     <td className="right">
                       <DealerCompareStack
                         current={dealerBreakdownCostTotal.cur}
                         compare={dealerBreakdownCostTotal.prior}
                         showCompareStack={compareActive}
-                        currentLabel={curLabel}
-                        compareLabel={priLabel}
                         deltaLabel={compareDeltaLabel}
                         format="currency"
                       />
                     </td>
+                    */}
                     <td className="right">
                       <DealerCompareStack
                         current={dealerBreakdownCostTotal.costPerVdp}
                         compare={dealerBreakdownCostTotal.costPerVdpPrior}
                         showCompareStack={compareActive}
-                        currentLabel={curLabel}
-                        compareLabel={priLabel}
                         deltaLabel={compareDeltaLabel}
                         format="costPerVdp"
                       />
@@ -1739,12 +1802,14 @@ export default function PortfolioView() {
                 </tfoot>
               </table>
             </div>
+            {/* Scroll hint hidden
             {dealerBreakdownSummaryRows.length > 10 && (
               <div className="vdp-scroll-hint">
                 Showing 10 of {dealerBreakdownSummaryRows.length} dealers — scroll for
                 more
               </div>
             )}
+            */}
           </>
         )}
       </Card>
@@ -2031,11 +2096,13 @@ export default function PortfolioView() {
                 </tfoot>
               </table>
             </div>
+            {/* Scroll hint hidden
             {filteredDealerRows.length > 10 && (
               <div className="vdp-scroll-hint">
                 Showing 10 of {filteredDealerRows.length} dealers — scroll for more
               </div>
             )}
+            */}
           </>
         )}
       </Card>
@@ -2174,11 +2241,13 @@ export default function PortfolioView() {
                 </tbody>
               </table>
             </div>
+            {/* Scroll hint hidden
             {dealerSummaryRows.length > 10 && (
               <div className="vdp-scroll-hint">
                 Showing 10 of {dealerSummaryRows.length} dealers — scroll for more
               </div>
             )}
+            */}
           </>
         )}
       </Card>

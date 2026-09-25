@@ -29,7 +29,7 @@ export const VDP_DEFAULT_COMPARE_MODE = null;
 export function resolveVdpReportPeriod(
   pickerValue,
   {
-    compareEnabled = true,
+    compareEnabled = false,
     compareDateRange = null,
     compareMode = VDP_DEFAULT_COMPARE_MODE,
   } = {}

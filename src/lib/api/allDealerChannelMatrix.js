@@ -1,13 +1,21 @@
 import { colorForChannel } from '@/lib/ga4/channelDisplay';
 
-/** Parallel chunks from the start — avoids one huge cold first RPC. */
-const CHUNK_SIZE = 12;
+/** Parallel chunks — larger chunks OK now that matrix uses src/med cache. */
+const CHUNK_SIZE = 40;
 const CHUNK_CONCURRENCY = 6;
+
+function isUnmappedBucket(name) {
+  return String(name || '')
+    .trim()
+    .toLowerCase() === 'unmapped';
+}
 
 function buildColumnOrder(results) {
   const totals = new Map();
   for (const row of results) {
     for (const slice of row.slices) {
+      // Keep Unmapped out of visible columns (still counted in row.total).
+      if (isUnmappedBucket(slice.name)) continue;
       totals.set(slice.name, (totals.get(slice.name) || 0) + (Number(slice.value) || 0));
     }
   }

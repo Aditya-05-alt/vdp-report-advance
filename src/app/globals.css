@@ -345,6 +345,39 @@ body {
 }
 .tb-div { width: 1px; height: 20px; background: var(--bd); flex-shrink: 0; }
 
+/* Fixed product logo (Login + Dashboard) */
+.sa-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  user-select: none;
+  text-decoration: none;
+  color: inherit;
+}
+.sa-logo-link {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+  color: inherit;
+}
+.sa-logo-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: 8px;
+  color: #fff;
+  background: linear-gradient(145deg, #3b82f6 0%, #1d4ed8 100%);
+  box-shadow: 0 4px 12px -4px rgba(37, 99, 235, 0.45);
+}
+.sa-logo-text {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+  white-space: nowrap;
+  color: var(--t, #0f172a);
+}
+
 .tb-nav-loading {
   display: inline-flex;
   align-items: center;

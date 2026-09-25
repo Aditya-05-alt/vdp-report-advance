@@ -251,7 +251,10 @@ export default function OverviewView() {
     toggleCompareMode,
   } = useVdpDateRange();
   const compareActive = compareMode === 'mom' || compareMode === 'pop';
-  const showCompare = Boolean(priFrom && priTo && (compareActive || compareEnabled));
+  // Only show compare when user picks MoM/PoP or turns on Compare period.
+  const showCompare = Boolean(
+    priFrom && priTo && (compareActive || compareEnabled)
+  );
   const comparePctLabel = compareMode === 'pop' ? 'PoP %' : 'MoM %';
   const compareModeLabel =
     compareMode === 'pop'

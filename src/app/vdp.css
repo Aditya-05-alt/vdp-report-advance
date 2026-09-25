@@ -37,6 +37,7 @@
 }
 
 .vdp-titleblock { margin-right: auto; }
+.vdp-titleblock .sa-logo-text { color: #fff; }
 .vdp-app-header h1 {
   font-size: 16px;
   margin: 0;
@@ -134,7 +135,76 @@
 }
 .vdp-table--dealer-compare td.right {
   vertical-align: top;
-  min-width: 110px;
+  min-width: 88px;
+}
+.vdp-table--dealer-compare {
+  --cmp-name-h: 2.5em;
+  --cmp-row-h: 18px;
+  --cmp-pct-h: 26px;
+}
+.vdp-dealer-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  min-width: 0;
+  width: 100%;
+}
+.vdp-dealer-cell-name {
+  display: block;
+  width: 100%;
+  min-height: var(--cmp-name-h);
+  margin-bottom: 6px;
+  font-weight: 700;
+  line-height: 1.25;
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: break-word;
+  word-break: normal;
+  hyphens: none;
+}
+.vdp-dealer-period-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  max-width: 100%;
+}
+.vdp-compare-align-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: var(--cmp-row-h);
+  line-height: 1.2;
+}
+.vdp-compare-stack .vdp-compare-align-row {
+  justify-content: flex-end;
+}
+.vdp-compare-align-row--pct {
+  min-height: var(--cmp-pct-h);
+  margin-top: 0;
+  padding-top: 4px;
+  border-top: 1px solid var(--vdp-border);
+  gap: 8px;
+}
+.vdp-dealer-period-legend .vdp-compare-align-row--pct {
+  border-top-color: transparent;
+}
+.vdp-dealer-period-line--cur {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vdp-ink);
+  white-space: nowrap;
+}
+.vdp-dealer-period-line--pri {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vdp-muted);
+  white-space: nowrap;
+}
+.vdp-compare-name-spacer {
+  min-height: var(--cmp-name-h);
+  margin-bottom: 6px;
 }
 /* Footer row scrolls vertically; only Dealer/Total stay frozen on X */
 .vdp-table-scroll .vdp-table--dealer-breakdown tfoot td:not(.vdp-db-sticky) {
@@ -153,8 +223,8 @@
 }
 /* Freeze Dealer + Total on horizontal scroll */
 .vdp-dealer-breakdown-scroll {
-  --db-dealer-w: 200px;
-  --db-total-w: 120px;
+  --db-dealer-w: 280px;
+  --db-total-w: 100px;
 }
 .vdp-table--dealer-breakdown {
   border-collapse: separate;
@@ -183,6 +253,13 @@
   min-width: var(--db-dealer-w);
   max-width: var(--db-dealer-w);
   border-right: 1px solid var(--vdp-border);
+  white-space: normal;
+  overflow: visible;
+}
+.vdp-table--dealer-breakdown td.vdp-dealer-name {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
 }
 .vdp-table--dealer-breakdown .vdp-db-sticky--total {
   left: var(--db-dealer-w);
@@ -204,25 +281,46 @@
   width: 88px;
   min-width: 88px;
   max-width: 88px;
-  height: 3.6em;
+  height: auto;
+  min-height: 3.6em;
   padding: 6px 8px;
   line-height: 1.25;
 }
-.vdp-table--dealer-breakdown thead th.vdp-db-ch-head .vdp-db-ch-label {
-  display: flex;
+.vdp-table--dealer-breakdown thead th.vdp-th-sortable.vdp-db-ch-head {
+  width: 100px;
+  min-width: 100px;
+  max-width: 120px;
+  cursor: pointer;
+  user-select: none;
+}
+.vdp-table--dealer-breakdown thead th.vdp-db-sticky--dealer.vdp-th-sortable {
+  width: var(--db-dealer-w);
+  min-width: var(--db-dealer-w);
+  max-width: var(--db-dealer-w);
+}
+.vdp-table--dealer-breakdown thead th.vdp-db-sticky--total.vdp-th-sortable {
+  width: var(--db-total-w);
+  min-width: var(--db-total-w);
+  max-width: var(--db-total-w);
+}
+.vdp-table--dealer-breakdown thead th.vdp-th-sortable .vdp-col-sort {
+  width: 100%;
   align-items: flex-end;
   justify-content: flex-end;
-  width: 100%;
-  height: 100%;
-  min-height: 2.8em;
-  margin: 0;
-  text-align: right;
-  line-height: 1.25;
-  /* Keep same font as .vdp-table th — do not override size/weight/case/color */
+  gap: 4px;
+}
+.vdp-table--dealer-breakdown thead th.vdp-db-sticky--dealer .vdp-col-sort {
+  justify-content: flex-start;
+  align-items: flex-start;
+}
+.vdp-table--dealer-breakdown thead th.vdp-th-sortable .vdp-col-sort-label {
+  display: block;
+  text-align: inherit;
+  white-space: normal;
+  line-height: 1.2;
+  /* Keep same font as .vdp-table th */
   overflow-wrap: normal;
   word-break: normal;
-  hyphens: none;
-  white-space: normal;
 }
 .vdp-table--dealer-breakdown td.right:not(.vdp-db-sticky) {
   width: 88px;
@@ -241,37 +339,6 @@
   min-width: 0;
   width: 100%;
 }
-.vdp-compare-line {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  justify-content: flex-start;
-  gap: 2px;
-  min-width: 0;
-}
-.vdp-compare-line--pct {
-  flex-direction: row;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 2px;
-  padding-top: 4px;
-  border-top: 1px solid var(--vdp-border);
-}
-.vdp-compare-lbl {
-  flex: 0 0 auto;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 9px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--vdp-muted);
-  text-align: right;
-  line-height: 1.2;
-}
 .vdp-compare-num {
   flex: 0 0 auto;
   max-width: 100%;
@@ -289,6 +356,15 @@
   color: var(--vdp-muted);
   font-weight: 600;
   font-size: 12px;
+}
+.vdp-compare-lbl {
+  flex: 0 0 auto;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--vdp-muted);
+  line-height: 1;
 }
 .vdp-compare-pct {
   flex: 0 0 auto;
@@ -2165,6 +2241,14 @@ body:has(.vdp-root) .nav-progress {
   max-width: 400px;
   width: 100%;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+  color: #0f172a;
+}
+.vdp-login-brand {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 18px;
+}
+.vdp-login-brand .sa-logo-text {
   color: #0f172a;
 }
 .vdp-login-card h1 {

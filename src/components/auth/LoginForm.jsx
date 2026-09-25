@@ -7,6 +7,7 @@ import { useSearchParams } from 'next/navigation';
 import { signInAction } from '@/lib/auth/actions';
 import { INACTIVITY_TIMEOUT_MINUTES } from '@/lib/auth/inactivityTimeout';
 import { resetDealerToAll } from '@/lib/dashboard/dashboardPrefs';
+import Logo from '@/components/ui/Logo';
 
 const initialState = { ok: false, error: null };
 
@@ -37,6 +38,9 @@ export default function LoginForm({ demoMode = false, demoEmail = '', demoPasswo
 
   return (
     <div className="vdp-login-card">
+      <div className="vdp-login-brand">
+        <Logo size="lg" />
+      </div>
       <h1>VDP &amp; Page View Performance</h1>
       <div className="vdp-login-sub">Dealer Reporting Portal — sign in to continue</div>
 

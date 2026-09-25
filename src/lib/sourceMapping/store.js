@@ -9,6 +9,14 @@ export const CHANNELS_TABLE = 'smart_source_mapping_channels_advance';
 export const RULES_TABLE = 'smart_source_mapping_rules_advance';
 
 const PAGE_SIZE = 1000;
+const LOAD_CACHE_TTL_MS = 60_000;
+
+/** Short in-memory cache — All Dealers fires many chunk requests; avoid re-paging 1k+ rules each time. */
+let loadCache = { at: 0, value: null };
+
+export function clearSourceMappingLoadCache() {
+  loadCache = { at: 0, value: null };
+}
 
 export function normalizeChannelRow(row) {
   return {
@@ -48,6 +56,11 @@ async function fetchAllRows(supabase, table, columns, { order } = {}) {
 }
 
 export async function loadSourceMapping(supabase) {
+  const now = Date.now();
+  if (loadCache.value && now - loadCache.at < LOAD_CACHE_TTL_MS) {
+    return loadCache.value;
+  }
+
   try {
     const [chRows, ruleRows] = await Promise.all([
       fetchAllRows(supabase, CHANNELS_TABLE, 'id, name, color, sort_order, is_unmapped', {
@@ -66,7 +79,9 @@ export async function loadSourceMapping(supabase) {
       rules.map((r) => [rawPairKey(r.rawSource, r.rawMedium), r.channelId])
     );
 
-    return { channels, mapping, rules, fromDefaults: false, missingTable: false };
+    const value = { channels, mapping, rules, fromDefaults: false, missingTable: false };
+    loadCache = { at: now, value };
+    return value;
   } catch (err) {
     const msg = err?.message || 'Failed to load source mapping';
     const missing = /could not find the table|relation .* does not exist|schema cache/i.test(
@@ -189,5 +204,6 @@ export async function saveSourceMapping(supabase, { channels, rules }) {
     if (delRuleErr) throw new Error(delRuleErr.message);
   }
 
+  clearSourceMappingLoadCache();
   return loadSourceMapping(supabase);
 }

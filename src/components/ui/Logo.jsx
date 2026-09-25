@@ -1,39 +1,48 @@
-export default function Logo({ size = 'md', showText = true }) {
-  const dims = size === 'lg' ? 36 : size === 'sm' ? 22 : 28;
-  const iconDims = size === 'lg' ? 18 : size === 'sm' ? 12 : 15;
+/** Fixed product logo — Login + Dashboard. */
+export const LOGO_NAME = 'Smart Analytics v3';
 
-  return (
-    <div className="flex items-center gap-2 select-none">
-      <div
-        className="flex items-center justify-center rounded-[8px] shrink-0"
-        style={{
-          width: dims,
-          height: dims,
-          background: 'var(--acc)',
-          boxShadow: '0 6px 18px -6px rgba(200,232,122,.45)',
-        }}
+export default function Logo({ size = 'md', showText = true, href }) {
+  const dims = size === 'lg' ? 36 : size === 'sm' ? 22 : 28;
+  const fontSize = size === 'lg' ? 18 : size === 'sm' ? 13 : 15;
+
+  const inner = (
+    <>
+      <span
+        className="sa-logo-mark"
+        style={{ width: dims, height: dims }}
+        aria-hidden
       >
-        <svg width={iconDims} height={iconDims} viewBox="0 0 16 16" fill="none">
-          <path
-            d="M2 12L6 7L9 10L13 4"
-            stroke="#14171C"
-            strokeWidth="2.2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-      </div>
-      {showText && (
-        <span
-          className="font-display font-bold tracking-tight"
-          style={{
-            fontSize: size === 'lg' ? 18 : size === 'sm' ? 13 : 15,
-            color: 'var(--t)',
-          }}
+        {/* Bars + pulse — matches slate/blue portal theme */}
+        <svg
+          width={dims * 0.58}
+          height={dims * 0.58}
+          viewBox="0 0 24 24"
+          fill="none"
         >
-          SmartAnalytics
+          <rect x="3" y="13" width="4" height="8" rx="1.2" fill="currentColor" opacity="0.55" />
+          <rect x="10" y="8" width="4" height="13" rx="1.2" fill="currentColor" opacity="0.8" />
+          <rect x="17" y="3" width="4" height="18" rx="1.2" fill="currentColor" />
+        </svg>
+      </span>
+      {showText && (
+        <span className="sa-logo-text" style={{ fontSize }}>
+          {LOGO_NAME}
         </span>
       )}
+    </>
+  );
+
+  if (href) {
+    return (
+      <a href={href} className={`sa-logo sa-logo--${size}`} aria-label={LOGO_NAME}>
+        {inner}
+      </a>
+    );
+  }
+
+  return (
+    <div className={`sa-logo sa-logo--${size}`} aria-label={LOGO_NAME}>
+      {inner}
     </div>
   );
 }

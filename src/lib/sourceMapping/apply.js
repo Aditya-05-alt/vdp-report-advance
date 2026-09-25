@@ -65,6 +65,7 @@ export function aggregateRawToChannels(rawRows, channels, mapping) {
  * Roll matrix source/medium slices into mapped channel columns.
  * Input rpc rows: { client_id, dealer_name, raw_source, raw_medium, views }
  * Output same shape as channel matrix: { client_id, dealer_name, channel_bucket, views }
+ * Unmapped rows are kept so dealer totals match Overview; UI hides that column.
  */
 export function mapSourceMediumMatrixRows(rpcRows, channels, mapping) {
   const totals = new Map(); // key: clientId|||channelName
@@ -89,6 +90,7 @@ export function mapSourceMediumMatrixRows(rpcRows, channels, mapping) {
         channel_bucket: ch.name,
         views: Number(row.views) || 0,
         _color: ch.color,
+        _unmapped: ch.id === UNMAPPED_ID || Boolean(ch.isUnmapped),
       });
     }
   }

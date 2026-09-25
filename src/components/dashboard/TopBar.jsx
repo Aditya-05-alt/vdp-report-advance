@@ -9,6 +9,7 @@ import { useNavigationLoading } from './NavigationLoading';
 import { CATEGORIES } from '@/lib/data/categories';
 import { createClient } from '@/lib/supabase/client';
 import ThemeToggle from '@/components/ui/ThemeToggle';
+import Logo from '@/components/ui/Logo';
 import { isAllDealerClient } from '@/lib/dashboard/allDealers';
 import { resetDealerToAll } from '@/lib/dashboard/dashboardPrefs';
 import {
@@ -279,24 +280,8 @@ export default function TopBar() {
 
   return (
     <header className="topbar">
-      <Link href="/dashboard/admin/pipeline" className="logo" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <div
-          style={{
-            width: 26, height: 26, background: 'var(--acc)',
-            borderRadius: 7, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-            boxShadow: '0 6px 18px -6px rgba(200,232,122,.4)',
-          }}
-        >
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-            <path d="M2 12L6 7L9 10L13 4" stroke="#14171C" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </div>
-        <span
-          className="font-display"
-          style={{ fontSize: 15, fontWeight: 700, color: 'var(--t)', letterSpacing: '-0.01em' }}
-        >
-          SmartAnalytics
-        </span>
+      <Link href="/dashboard" className="logo sa-logo-link" aria-label="Smart Analytics v3">
+        <Logo size="md" />
       </Link>
 
       {!hideDealerPicker && (

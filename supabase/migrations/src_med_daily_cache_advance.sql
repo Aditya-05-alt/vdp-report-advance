@@ -119,3 +119,8 @@ GRANT EXECUTE ON FUNCTION public.get_raw_source_medium_traffic_bulk_advance(date
 -- Backfill example (run per day after deploy / nightly):
 -- SELECT public.refresh_src_med_daily_advance(d::date)
 -- FROM generate_series(date_trunc('month', CURRENT_DATE)::date, CURRENT_DATE, '1 day') d;
+--
+-- Production crons (pg_cron):
+--   refresh-src-med-daily-advance         → 15 4 * * *  (last 4 days)
+--   refresh-src-med-daily-advance-evening → 30 23 * * * (yesterday + today)
+-- You do NOT need to run this manually for daily All Dealers / Source Mapping.

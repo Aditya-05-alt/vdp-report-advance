@@ -11,6 +11,7 @@ import CalendarRangePicker from '@/components/dashboard/CalendarRangePicker';
 import { useVdpDateRange } from '@/components/vdp/VdpDateRangeContext';
 import DealerViewsKeepAlive from '@/components/vdp/DealerViewsKeepAlive';
 import HomeViewsKeepAlive from '@/components/vdp/HomeViewsKeepAlive';
+import Logo from '@/components/ui/Logo';
 
 const HOME_VIEWS = [
   { id: 'portfolio', href: '/dashboard', label: 'All Dealers' },
@@ -125,7 +126,7 @@ export default function VdpShell({ children }) {
       <div className="vdp-top-chrome">
         <header className="vdp-app-header">
           <div className="vdp-titleblock">
-            <h1>VDP &amp; Page View Performance</h1>
+            <Logo size="md" />
             <div className="vdp-sub">Dealer reporting portal</div>
           </div>
           {showDateRange && (
